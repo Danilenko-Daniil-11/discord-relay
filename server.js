@@ -1,3 +1,4 @@
+// server.js
 import express from "express";
 import { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } from "discord.js";
 import { WebSocketServer } from "ws";
@@ -16,10 +17,10 @@ app.use(express.json({ limit: "50mb" }));
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const CATEGORY_NAME = "Все ПК";
-const ONLINE_TIMEOUT = 10 * 1000;
+const ONLINE_TIMEOUT = 3 * 60 * 1000; // 3 минуты
 
 // ---------- Состояние ----------
-const onlinePCs = {};          // pcId -> timestamp
+const onlinePCs = {};          // pcId -> timestamp последнего пинга
 const pendingCommands = {};    // pcId -> array of commands
 const channelByPC = {};        // pcId -> channelId
 const wsCameraClients = {};    // pcId -> array of ws для live-камеры
@@ -30,6 +31,11 @@ function makeShortId(pcId) {
     const shortId = crypto.createHash("sha1").update(pcId).digest("hex").slice(0, 10);
     pcIdMap[shortId] = pcId;
     return shortId;
+}
+
+function isPcOnline(pcId) {
+    const lastPing = onlinePCs[pcId];
+    return lastPing && (Date.now() - lastPing < ONLINE_TIMEOUT);
 }
 
 // ---------- Discord Bot ----------
@@ -75,17 +81,15 @@ bot.on("interactionCreate", async interaction => {
         return;
     }
 
-    const lastPing = onlinePCs[pcId];
-    const isOnline = lastPing && (Date.now() - lastPing < ONLINE_TIMEOUT);
-
     const replyOptions = { ephemeral: true };
+
     if(command === "check_online") {
-        replyOptions.content = isOnline ? `✅ ПК ${pcId} онлайн` : `❌ ПК ${pcId} оффлайн`;
+        replyOptions.content = isPcOnline(pcId) ? `✅ ПК ${pcId} онлайн` : `❌ ПК ${pcId} оффлайн`;
         await interaction.reply(replyOptions);
         return;
     }
 
-    if(!isOnline){
+    if(!isPcOnline(pcId)){
         replyOptions.content = `❌ ПК ${pcId} оффлайн`;
         await interaction.reply(replyOptions);
         return;
@@ -172,7 +176,7 @@ app.post("/upload-cam", async (req, res) => {
 app.post("/ping", (req,res)=>{
     const { pcId } = req.body;
     if(!pcId) return res.status(400).json({ error:"pcId required" });
-    onlinePCs[pcId] = Date.now();
+    onlinePCs[pcId] = Date.now(); // обновляем последнее время пинга
     const commands = pendingCommands[pcId] || [];
     pendingCommands[pcId] = [];
     res.json({ commands });
@@ -180,7 +184,8 @@ app.post("/ping", (req,res)=>{
 
 // ---------- API фронта ----------
 app.get("/api/online-pcs", (req,res)=>{
-    res.json(Object.keys(onlinePCs));
+    const result = Object.keys(onlinePCs).filter(pcId => isPcOnline(pcId));
+    res.json(result);
 });
 
 // ---------- Статика ----------
