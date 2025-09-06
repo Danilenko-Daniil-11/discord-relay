@@ -5,39 +5,35 @@
 <title>Камеры ПК</title>
 </head>
 <body>
-<h1>Выберите ПК</h1>
+<h1>Онлайн камеры ПК</h1>
 <select id="pcSelect"></select>
-<canvas id="videoCanvas" width="640" height="480" style="border:1px solid #000;"></canvas>
+<br><br>
+<img id="camView" width="640" height="480" style="border:1px solid #000">
 
 <script>
-const pcSelect = document.getElementById('pcSelect');
-const canvas = document.getElementById('videoCanvas');
-const ctx = canvas.getContext('2d');
-
 let ws;
+const select = document.getElementById('pcSelect');
+const img = document.getElementById('camView');
 
-function connectToPC(pcId){
+async function updatePCList(){
+    const res = await fetch('/api/online-pcs'); // нужно создать эндпоинт для списка
+    const pcs = await res.json();
+    select.innerHTML = pcs.map(pc => `<option value="${pc}">${pc}</option>`).join('');
+    if(pcs.length>0) connectWS(pcs[0]);
+}
+
+function connectWS(pcId){
     if(ws) ws.close();
-    ws = new WebSocket(`ws://${location.host}/?pcId=${pcId}`);
-    ws.onmessage = e=>{
-        const img = new Image();
-        img.src = 'data:image/jpeg;base64,' + e.data;
-        img.onload = ()=>ctx.drawImage(img,0,0,canvas.width,canvas.height);
+    ws = new WebSocket(`ws://${location.host}?pcId=${encodeURIComponent(pcId)}`);
+    ws.onmessage = e => {
+        img.src = "data:image/jpeg;base64," + e.data;
     };
 }
 
-// TODO: динамически заполнять список ПК
-// Для примера можно вручную добавить
-const pcs = ["ПК_1","ПК_2"];
-pcs.forEach(pc=>{
-    const opt = document.createElement("option");
-    opt.value = pc;
-    opt.textContent = pc;
-    pcSelect.appendChild(opt);
-});
+select.addEventListener('change', e => connectWS(e.target.value));
 
-pcSelect.addEventListener("change", ()=>connectToPC(pcSelect.value));
-connectToPC(pcSelect.value);
+updatePCList();
+setInterval(updatePCList, 10000); // обновляем список каждые 10 сек
 </script>
 </body>
 </html>
