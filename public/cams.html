@@ -1,33 +1,96 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
 <meta charset="UTF-8">
 <title>Камеры ПК</title>
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        background-color: #1e1e1e;
+        color: #eee;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 20px;
+    }
+    h1 {
+        margin-bottom: 20px;
+        color: #00d8ff;
+    }
+    #pcSelect {
+        padding: 8px 12px;
+        font-size: 16px;
+        border-radius: 5px;
+        border: none;
+        margin-bottom: 20px;
+        background-color: #333;
+        color: #eee;
+    }
+    #camContainer {
+        position: relative;
+        width: 640px;
+        height: 480px;
+        border: 2px solid #00d8ff;
+        border-radius: 8px;
+        overflow: hidden;
+        background-color: #000;
+    }
+    #camView {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        display: block;
+    }
+    #status {
+        margin-top: 10px;
+        font-size: 14px;
+        color: #aaa;
+    }
+</style>
 </head>
 <body>
 <h1>Онлайн камеры ПК</h1>
 <select id="pcSelect"></select>
-<br><br>
-<img id="camView" width="640" height="480" style="border:1px solid #000">
+
+<div id="camContainer">
+    <img id="camView" src="" alt="Camera feed">
+</div>
+<div id="status">Выберите ПК для просмотра</div>
 
 <script>
 let ws;
 const select = document.getElementById('pcSelect');
 const img = document.getElementById('camView');
+const status = document.getElementById('status');
 
 async function updatePCList(){
-    const res = await fetch('/api/online-pcs'); // нужно создать эндпоинт для списка
-    const pcs = await res.json();
-    select.innerHTML = pcs.map(pc => `<option value="${pc}">${pc}</option>`).join('');
-    if(pcs.length>0) connectWS(pcs[0]);
+    try {
+        const res = await fetch('/api/online-pcs'); // эндпоинт для списка ПК
+        const pcs = await res.json();
+        if(JSON.stringify(Array.from(select.options).map(o=>o.value)) !== JSON.stringify(pcs)){
+            select.innerHTML = pcs.map(pc => `<option value="${pc}">${pc}</option>`).join('');
+            if(pcs.length>0) connectWS(pcs[0]);
+            else {
+                if(ws) ws.close();
+                img.src = '';
+                status.textContent = "Нет онлайн ПК";
+            }
+        }
+    } catch(e){
+        console.error(e);
+        status.textContent = "Ошибка загрузки списка ПК";
+    }
 }
 
 function connectWS(pcId){
     if(ws) ws.close();
     ws = new WebSocket(`ws://${location.host}?pcId=${encodeURIComponent(pcId)}`);
-    ws.onmessage = e => {
-        img.src = "data:image/jpeg;base64," + e.data;
-    };
+    status.textContent = `Подключение к ${pcId}...`;
+    
+    ws.onopen = () => status.textContent = `Просмотр камеры ПК: ${pcId}`;
+    ws.onmessage = e => img.src = "data:image/jpeg;base64," + e.data;
+    ws.onclose = () => status.textContent = `Отключено от ${pcId}`;
+    ws.onerror = () => status.textContent = `Ошибка подключения к ${pcId}`;
 }
 
 select.addEventListener('change', e => connectWS(e.target.value));
