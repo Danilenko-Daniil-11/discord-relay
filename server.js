@@ -44,14 +44,14 @@ async function getOrCreateTextChannel(guild, name, parentId){
 // ---------- Приём данных ПК ----------
 app.post("/upload-pc", async (req,res)=>{
     try{
-        const { pcId, info } = req.body;
+        const { pcId } = req.body;
         if(!pcId) return res.status(400).json({ error:"pcId required" });
 
         onlinePCs[pcId] = Date.now();
 
         const guild = await bot.guilds.fetch(GUILD_ID);
         const category = await getOrCreateCategory(guild, PC_CATEGORY_NAME);
-        await getOrCreateTextChannel(guild, pcId, category.id); // канал создаём только для ПК, сообщения не трогаем
+        await getOrCreateTextChannel(guild, pcId, category.id);
 
         res.json({ success:true });
     }catch(err){
@@ -75,7 +75,12 @@ app.post("/upload-cam", async (req,res)=>{
 
         // ---------- Удаляем предыдущее сообщение ----------
         if(lastMessageByCam[camId]){
-            try { await lastMessageByCam[camId].delete(); } catch(e){ console.error("Не удалось удалить сообщение камеры:", e); }
+            try {
+                await lastMessageByCam[camId].delete();
+                console.log(`✅ Предыдущее сообщение камеры ${camId} удалено`);
+            } catch(e){
+                console.error("Не удалось удалить сообщение камеры:", e);
+            }
         }
 
         // ---------- Отправляем новое ----------
@@ -91,22 +96,32 @@ app.post("/upload-cam", async (req,res)=>{
 
 // ---------- Проверка онлайн камер ----------
 setInterval(async ()=>{
-    const guild = await bot.guilds.fetch(GUILD_ID);
-    const now = Date.now();
-    for(const camId of Object.keys(onlineCams)){
-        if(now - onlineCams[camId] > ONLINE_TIMEOUT){
-            // оффлайн — удаляем канал
-            const channelId = channelByCam[camId];
-            if(channelId){
-                try{
-                    const channel = await guild.channels.fetch(channelId);
-                    if(channel) await channel.delete();
-                }catch(e){ console.error("Не удалось удалить канал камеры:", e); }
+    try{
+        const guild = await bot.guilds.fetch(GUILD_ID);
+        const now = Date.now();
+
+        for(const camId of Object.keys(onlineCams)){
+            if(now - onlineCams[camId] > ONLINE_TIMEOUT){
+                console.log(`⚠ Камера ${camId} оффлайн, удаляем канал`);
+
+                const channelId = channelByCam[camId];
+                if(channelId){
+                    try{
+                        const channel = await guild.channels.fetch(channelId);
+                        if(channel) await channel.delete();
+                        console.log(`✅ Канал камеры ${camId} удалён`);
+                    }catch(e){
+                        console.error("Не удалось удалить канал камеры:", e);
+                    }
+                }
+
+                delete onlineCams[camId];
+                delete lastMessageByCam[camId];
+                delete channelByCam[camId];
             }
-            delete onlineCams[camId];
-            delete lastMessageByCam[camId];
-            delete channelByCam[camId];
         }
+    }catch(err){
+        console.error("Ошибка проверки камер:", err);
     }
 }, 30*1000);
 
