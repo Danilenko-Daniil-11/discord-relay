@@ -58,6 +58,19 @@ bot.on("interactionCreate", async interaction => {
   const [command, pcId] = interaction.customId.split("-");
   const lastPing = onlinePCs[pcId];
 
+  // Чек онлайна — отдельная логика
+  if (command === "check_online") {
+    if (!lastPing || (Date.now() - lastPing > ONLINE_TIMEOUT)) {
+      await interaction.reply({ content: `❌ ПК ${pcId} оффлайн`, ephemeral: true });
+    } else {
+      if (!pendingCommands[pcId]) pendingCommands[pcId] = [];
+      pendingCommands[pcId].push("check_online");
+      await interaction.reply({ content: `🔄 Запрошена проверка онлайна для ${pcId}`, ephemeral: true });
+    }
+    return;
+  }
+
+  // Остальные команды
   if (!lastPing || (Date.now() - lastPing > ONLINE_TIMEOUT)) {
     await interaction.reply({ content: `❌ ПК ${pcId} оффлайн`, ephemeral: true });
     return;
