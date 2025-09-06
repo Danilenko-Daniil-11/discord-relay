@@ -16,7 +16,7 @@ app.use(express.json({ limit: "50mb" }));
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const CATEGORY_NAME = "Все ПК";
-const ONLINE_TIMEOUT = 3 * 60 * 1000;
+const ONLINE_TIMEOUT = 10 * 1000;
 
 // ---------- Состояние ----------
 const onlinePCs = {};          // pcId -> timestamp
