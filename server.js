@@ -32,18 +32,24 @@ async function getOrCreateCategory(guild, name) {
 
 // Хелпер: получить или создать текстовый канал
 async function getOrCreateTextChannel(guild, name, parentId) {
+  if (!name) throw new Error("Channel name is required!");
+  
+  // Сначала пытаемся найти существующий канал
   let channel = guild.channels.cache.find(
     (c) => c.type === 0 && c.name === name && c.parentId === parentId
   );
+
+  // Если не нашли — создаём новый
   if (!channel) {
     channel = await guild.channels.create({
-      name,
-      type: 0,
-      parent: parentId,
+      name: name,
+      type: 0,          // текстовый канал
+      parent: parentId, // id категории
     });
   }
   return channel;
 }
+
 
 // Маршрут для загрузки данных от расширения
 app.post("/upload", async (req, res) => {
