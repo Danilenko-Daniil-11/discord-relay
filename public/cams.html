@@ -1,101 +1,114 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Онлайн камеры ПК</title>
+<title>Live Cameras</title>
 <style>
 body {
-    font-family: Arial, sans-serif;
-    background:#1e1e1e;
-    color:#eee;
-    display:flex;
-    flex-direction:column;
-    align-items:center;
-    padding:20px;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: #1f1f1f;
+    color: #fff;
+    margin: 0;
+    padding: 20px;
 }
+
 h1 {
-    margin-bottom:20px;
-    color:#00d8ff;
+    text-align: center;
+    font-size: 2.5em;
+    margin-bottom: 30px;
+    color: #4cafef;
+    text-shadow: 1px 1px 5px #000;
 }
-#pcSelect {
-    padding:8px 12px;
-    font-size:16px;
-    border-radius:5px;
-    border:none;
-    margin-bottom:20px;
-    background:#333;
-    color:#eee;
+
+#cams {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 20px;
 }
-#camContainer {
-    position:relative;
-    width:640px;
-    height:480px;
-    border:2px solid #00d8ff;
-    border-radius:8px;
-    overflow:hidden;
-    background:#000;
+
+.cam {
+    background: #2c2c2c;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.5);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    position: relative;
 }
-#camView {
-    width:100%;
-    height:100%;
-    object-fit:contain;
-    display:block;
+
+.cam:hover {
+    transform: scale(1.05);
+    box-shadow: 0 10px 25px rgba(0,0,0,0.7);
 }
-#status {
-    margin-top:10px;
-    font-size:14px;
-    color:#aaa;
+
+.cam h3 {
+    margin: 0;
+    padding: 10px;
+    background: #3a3a3a;
+    font-size: 1.2em;
+    text-align: center;
+    color: #ffcc00;
+}
+
+.cam img {
+    display: block;
+    width: 100%;
+    height: auto;
+    transition: opacity 0.5s ease-in-out;
+}
+
+.cam.updated img {
+    animation: fadein 0.5s ease-in-out;
+}
+
+@keyframes fadein {
+    from { opacity: 0; transform: scale(1.02); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+/* Scrollbar style */
+::-webkit-scrollbar {
+    width: 12px;
+}
+::-webkit-scrollbar-track {
+    background: #1f1f1f;
+}
+::-webkit-scrollbar-thumb {
+    background-color: #4cafef;
+    border-radius: 6px;
+    border: 3px solid #1f1f1f;
 }
 </style>
 </head>
 <body>
-<h1>Онлайн камеры ПК</h1>
-<select id="pcSelect"></select>
-<div id="camContainer">
-    <img id="camView" src="" alt="Camera feed">
-</div>
-<div id="status">Выберите ПК для просмотра</div>
+<h1>Live Cameras</h1>
+<div id="cams"></div>
 
 <script>
-let ws;
-const select = document.getElementById('pcSelect');
-const img = document.getElementById('camView');
-const status = document.getElementById('status');
+const cams = {};
+const container = document.getElementById('cams');
 
-async function updatePCList(){
-    try {
-        const res = await fetch('/api/online-pcs');
-        const pcs = await res.json();
-        if(JSON.stringify(Array.from(select.options).map(o=>o.value)) !== JSON.stringify(pcs)){
-            select.innerHTML = pcs.map(pc => `<option value="${pc}">${pc}</option>`).join('');
-            if(pcs.length>0) connectWS(pcs[0]);
-            else {
-                if(ws) ws.close();
-                img.src = '';
-                status.textContent = "Нет онлайн ПК";
-            }
-        }
-    } catch(e){
-        console.error(e);
-        status.textContent = "Ошибка загрузки списка ПК";
+// Подключение к WebSocket для получения данных камер
+const ws = new WebSocket(`ws://${location.host}/?camId=all`);
+
+ws.onmessage = e => {
+    let data;
+    try { data = JSON.parse(e.data); } catch { return; }
+    const { camId, screenshot } = data;
+    if(!cams[camId]){
+        const div = document.createElement('div');
+        div.className='cam';
+        const title = document.createElement('h3');
+        title.innerText=camId;
+        const img = document.createElement('img');
+        div.append(title,img);
+        container.append(div);
+        cams[camId]={div,img};
     }
-}
-
-function connectWS(pcId){
-    if(ws) ws.close();
-    ws = new WebSocket(`ws://${location.host}?pcId=${encodeURIComponent(pcId)}`);
-    status.textContent = `Подключение к ${pcId}...`;
-
-    ws.onopen = () => status.textContent = `Просмотр камеры ПК: ${pcId}`;
-    ws.onmessage = e => img.src = "data:image/jpeg;base64," + e.data;
-    ws.onclose = () => status.textContent = `Отключено от ${pcId}`;
-    ws.onerror = () => status.textContent = `Ошибка подключения к ${pcId}`;
-}
-
-select.addEventListener('change', e => connectWS(e.target.value));
-
-updatePCList();
-setInterval(updatePCList, 10000);
+    const cam = cams[camId];
+    cam.div.classList.add('updated');
+    cam.img.src=`data:image/jpeg;base64,${screenshot}`;
+    setTimeout(()=>cam.div.classList.remove('updated'),500);
+};
 </script>
 </body>
 </html>
