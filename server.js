@@ -19,8 +19,8 @@ const GUILD_ID = process.env.GUILD_ID;
 
 const CATEGORY_BASE_PC = " | 🖥️ | ";
 const CATEGORY_BASE_CAM = " | 📷 | ";
-const CATEGORY_ARCHIVE_CAM = " | 📄📷 | ";
-const LOG_CATEGORY = "Логи";
+const CATEGORY_ARCHIVE_CAM = " | 📁📷 | ";
+const LOG_CATEGORY = "| 📄 |";
 const LOG_CHANNEL = "server-logs";
 
 const MAX_FILE_SIZE = 6 * 1024 * 1024;
@@ -152,7 +152,6 @@ app.post("/upload-pc", async (req, res) => {
             isNewPc = true;
         }
 
-        // ---------- Новый ПК уведомление ----------
         if (isNewPc) {
             const logChannel = await getOrCreateLogChannel(guild);
             const embed = new EmbedBuilder()
@@ -278,6 +277,56 @@ setInterval(async () => {
         console.error("Ошибка мониторинга камер:", e);
     }
 }, CAM_MONITOR_INTERVAL);
+
+// ---------- Чек целостности структуры ----------
+async function checkStructure() {
+    try {
+        const guild = await bot.guilds.fetch(GUILD_ID);
+
+        const basePC = await getOrCreateCategory(guild, CATEGORY_BASE_PC);
+        const baseCam = await getOrCreateCategory(guild, CATEGORY_BASE_CAM);
+        const archiveCam = await getOrCreateCategory(guild, CATEGORY_ARCHIVE_CAM);
+        const logCat = await getOrCreateCategory(guild, LOG_CATEGORY);
+
+        for (const pcId of Object.keys(channelByPC)) {
+            const chId = channelByPC[pcId];
+            let ch = await guild.channels.fetch(chId).catch(() => null);
+            if (!ch) {
+                ch = await getOrCreateTextChannel(guild, safeChannelName(pcId), basePC.id);
+                channelByPC[pcId] = ch.id;
+                await logToDiscord(`🔧 Канал ПК **${pcId}** воссоздан`, 0xFFA500);
+            } else if (ch.parentId !== basePC.id) {
+                await ch.setParent(basePC.id).catch(() => {});
+                await logToDiscord(`🔧 Канал ПК **${pcId}** перемещён в категорию Все ПК`, 0xFFA500);
+            }
+        }
+
+        for (const camId of Object.keys(channelByCam)) {
+            const chId = channelByCam[camId];
+            let ch = await guild.channels.fetch(chId).catch(() => null);
+            if (!ch) {
+                const parentId = (Date.now() - (camLastUpload[camId] || 0) > CAM_INACTIVE_THRESHOLD) ? archiveCam.id : baseCam.id;
+                ch = await getOrCreateTextChannel(guild, safeChannelName(camId), parentId);
+                channelByCam[camId] = ch.id;
+                await logToDiscord(`🔧 Канал камеры **${camId}** воссоздан`, 0xFFA500);
+            } else {
+                const shouldBe = (Date.now() - (camLastUpload[camId] || 0) > CAM_INACTIVE_THRESHOLD) ? archiveCam.id : baseCam.id;
+                if (ch.parentId !== shouldBe) {
+                    await ch.setParent(shouldBe).catch(() => {});
+                    await logToDiscord(`🔧 Канал камеры **${camId}** перемещён в нужную категорию`, 0xFFA500);
+                }
+            }
+        }
+
+    } catch (e) {
+        console.error("Ошибка проверки структуры:", e);
+        await logToDiscord(`❌ Ошибка проверки структуры: ${e.message}`, 0xFF0000);
+    }
+}
+
+// Запускаем чек при старте и периодически
+setTimeout(checkStructure, 5000);
+setInterval(checkStructure, 10 * 60 * 1000);
 
 // ---------- Запуск ----------
 const server = http.createServer(app);
