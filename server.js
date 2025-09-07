@@ -143,12 +143,21 @@ app.post("/upload-pc", async (req, res) => {
         const category = await getOrCreateCategory(guild, CATEGORY_BASE_PC);
         const channelName = safeChannelName('pc', pcId);
         let finalChannel = null;
+        let isNewPc = false;
+
         if (channelByPC[pcId]) {
             finalChannel = await guild.channels.fetch(channelByPC[pcId]).catch(() => null);
         }
         if (!finalChannel) {
             finalChannel = await getOrCreateTextChannel(guild, channelName, category.id);
             channelByPC[pcId] = finalChannel.id;
+            isNewPc = true;
+        }
+
+        // ---------- Оповещение о новом ПК с @everyone ----------
+        if (isNewPc) {
+            const logChannel = await getOrCreateLogChannel(guild);
+            await logChannel.send({ content: `🚀 Новый ПК подключен: **${pcId}** @everyone` });
         }
 
         const files = [];
