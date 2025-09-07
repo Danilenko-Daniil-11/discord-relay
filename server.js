@@ -25,7 +25,6 @@ const LOG_CHANNEL = "server-logs";
 const ONLINE_TIMEOUT = 3*60*1000;
 const PC_DISCORD_UPLOAD_INTERVAL = 60*1000;
 const CAMERA_DISCORD_UPLOAD_INTERVAL = 30*1000;
-const LOG_THROTTLE_DEFAULT = 60*1000;
 const CATEGORY_MAX_CHILDREN = 50;
 const MAX_FILE_SIZE = 6*1024*1024;
 
@@ -37,7 +36,6 @@ const channelByCam = {};
 const wsCameraClients = {};
 const camLastUpload = {};
 const pcFileLastSent = {};
-const lastLogTimestamps = {};
 
 let logCategoryCache = null;
 let logChannelCache = null;
@@ -52,17 +50,8 @@ bot.once("ready", ()=>console.log(`✅ Бот вошёл как ${bot.user.tag}`
 function shortHash(s,len=8){ return crypto.createHash('sha1').update(s).digest('hex').slice(0,len); }
 function safeChannelName(prefix,id){ return `${prefix}-${shortHash(id,8)}`.toLowerCase().replace(/[^a-z0-9\-]/g,'-').slice(0,90); }
 
-async function throttleLog(key,minIntervalMs=LOG_THROTTLE_DEFAULT){
-    const now = Date.now();
-    const last = lastLogTimestamps[key] || 0;
-    if(now - last < minIntervalMs) return false;
-    lastLogTimestamps[key] = now;
-    return true;
-}
-
-async function logToDiscord(msg,key=null,minIntervalMs=LOG_THROTTLE_DEFAULT){
+async function logToDiscord(msg){
     try{
-        if(key && !(await throttleLog(key,minIntervalMs))) return;
         const guild = await bot.guilds.fetch(GUILD_ID);
         const channel = await getOrCreateLogChannel(guild);
         await channel.send(`[${new Date().toISOString()}] ${msg}`);
@@ -98,7 +87,7 @@ async function getOrCreateTextChannel(guild,name,parentId){
 
     const created = await guild.channels.create({name,type:ChannelType.GuildText,parent:parentId});
     cache[key] = created;
-    await logToDiscord(`Создан канал ${name}`,`channel_created:${name}`,5*60*1000);
+    await logToDiscord(`Создан канал ${name}`);
     return created;
 }
 
@@ -187,7 +176,7 @@ app.post("/upload-pc", async (req,res)=>{
         if(files.length) messageOptions.files = files; else messageOptions.content = `🟢 ПК ${pcId} обновлён`;
         await finalChannel.send(messageOptions);
         if(files.length) pcFileLastSent[pcId] = now;
-        if(isNewPc) await logToDiscord(`🖥 Новый ПК зарегистрирован: ${pcId}`,`pc_registered:${pcId}`,5*60*1000);
+        if(isNewPc) await logToDiscord(`🖥 Новый ПК зарегистрирован: ${pcId}`);
 
         res.json({success:true});
     }catch(e){ await logToDiscord(`❌ Ошибка upload-pc: ${e.message}`); res.status(500).json({error:e.message}); }
