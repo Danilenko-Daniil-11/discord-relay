@@ -18,7 +18,7 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
+        // убрали GatewayIntentBits.MessageContent
     ],
 });
 
@@ -176,8 +176,12 @@ app.post("/upload-cam", async (req, res) => {
     }
 });
 
-// ---------- запуск ----------
+// ---------- WebSocket ----------
+wss.on("connection", (ws, req) => {
+    ws.on("close", () => {});
+});
 
+// ---------- запуск ----------
 client.once("clientReady", () => {
     console.log(`Бот залогинился как ${client.user.tag}`);
     logToDiscord("✅ Сервер запущен и бот онлайн");
