@@ -1,1 +1,3 @@
-# discord-relay
+# СЕРВАК ДЛЯ СТИЛЛЕРА НА NODE.JS 
+## MADE BY SOYKA / ANONIM
+## ПЕРЕДАЮ ПРИВЕТ ТЕМ КТО РАБОТАЕТ В ШКОЛЕ 
