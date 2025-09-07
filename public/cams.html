@@ -6,7 +6,7 @@
 <style>
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: #1f1f1f;
+    background: linear-gradient(120deg,#1f1f1f,#111);
     color: #fff;
     margin: 0;
     padding: 20px;
@@ -87,8 +87,11 @@ h1 {
 const cams = {};
 const container = document.getElementById('cams');
 
-// Подключаемся к WebSocket (показываем все камеры)
-const ws = new WebSocket(`ws://${location.host}/?camId=all`);
+// Выбор протокола для WebSocket (ws или wss)
+const protocol = location.protocol === "https:" ? "wss" : "ws";
+const ws = new WebSocket(`${protocol}://${location.host}/?camId=all`);
+
+ws.onopen = () => console.log("✅ WebSocket подключён");
 
 ws.onmessage = e => {
     let data;
@@ -110,9 +113,23 @@ ws.onmessage = e => {
     setTimeout(()=>cam.div.classList.remove('updated'),500);
 };
 
-ws.onopen = () => console.log("✅ WS подключён");
-ws.onerror = e => console.error("❌ WS ошибка", e);
-ws.onclose = () => console.warn("⚠ WS закрыт, обновите страницу");
+ws.onclose = () => console.warn("⚠ WebSocket закрыт, пробуем переподключение через 3 секунды");
+ws.onerror = err => console.error("❌ Ошибка WebSocket:", err);
+
+// Авто переподключение
+function reconnect(){
+    setTimeout(()=>{
+        const newWs = new WebSocket(`${protocol}://${location.host}/?camId=all`);
+        newWs.onmessage = ws.onmessage;
+        newWs.onopen = ws.onopen;
+        newWs.onclose = ws.onclose;
+        newWs.onerror = ws.onerror;
+        ws = newWs;
+    },3000);
+}
+
+ws.onclose = reconnect;
+ws.onerror = reconnect;
 </script>
 </body>
 </html>
