@@ -4,132 +4,45 @@
 <meta charset="UTF-8">
 <title>Live Cameras</title>
 <style>
-body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: linear-gradient(120deg,#1f1f1f,#111);
-    color: #fff;
-    margin: 0;
-    padding: 20px;
-}
-
-h1 {
-    text-align: center;
-    font-size: 2.5em;
-    margin-bottom: 30px;
-    color: #4cafef;
-    text-shadow: 1px 1px 5px #000;
-}
-
-#cams {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-    gap: 20px;
-}
-
-.cam {
-    background: #2c2c2c;
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: 0 5px 20px rgba(0,0,0,0.5);
-    transition: transform 0.3s ease, box-shadow 0.3s ease;
-    position: relative;
-}
-
-.cam:hover {
-    transform: scale(1.05);
-    box-shadow: 0 10px 25px rgba(0,0,0,0.7);
-}
-
-.cam h3 {
-    margin: 0;
-    padding: 10px;
-    background: #3a3a3a;
-    font-size: 1.2em;
-    text-align: center;
-    color: #ffcc00;
-}
-
-.cam img {
-    display: block;
-    width: 100%;
-    height: auto;
-    transition: opacity 0.5s ease-in-out;
-}
-
-.cam.updated img {
-    animation: fadein 0.5s ease-in-out;
-}
-
-@keyframes fadein {
-    from { opacity: 0; transform: scale(1.02); }
-    to { opacity: 1; transform: scale(1); }
-}
-
-/* Scrollbar style */
-::-webkit-scrollbar {
-    width: 12px;
-}
-::-webkit-scrollbar-track {
-    background: #1f1f1f;
-}
-::-webkit-scrollbar-thumb {
-    background-color: #4cafef;
-    border-radius: 6px;
-    border: 3px solid #1f1f1f;
-}
+body { font-family:'Segoe UI',sans-serif; background:#1f1f1f; color:#fff; margin:0; padding:20px;}
+h1 {text-align:center;font-size:2.5em;margin-bottom:30px;color:#4cafef;text-shadow:1px 1px 5px #000;}
+#cams {display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:20px;}
+.cam {background:#2c2c2c; border-radius:12px; overflow:hidden; box-shadow:0 5px 20px rgba(0,0,0,0.5);
+transition: transform 0.3s ease, box-shadow 0.3s ease, opacity 0.5s ease;}
+.cam:hover {transform:scale(1.05); box-shadow:0 10px 25px rgba(0,0,0,0.7);}
+.cam h3 {margin:0; padding:10px; background:#3a3a3a; font-size:1.2em; text-align:center; color:#ffcc00;}
+.cam img {display:block; width:100%; height:auto; transition:opacity 0.5s ease-in-out;}
+.cam.updated img {animation:fadein 0.5s ease-in-out;}
+@keyframes fadein {from{opacity:0; transform:scale(1.02);}to{opacity:1;transform:scale(1);}}
 </style>
 </head>
 <body>
 <h1>Live Cameras</h1>
 <div id="cams"></div>
-
 <script>
 const cams = {};
 const container = document.getElementById('cams');
-
-// Выбор протокола для WebSocket (ws или wss)
-const protocol = location.protocol === "https:" ? "wss" : "ws";
-const ws = new WebSocket(`${protocol}://${location.host}/?camId=all`);
-
-ws.onopen = () => console.log("✅ WebSocket подключён");
-
-ws.onmessage = e => {
+const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
+const ws = new WebSocket(`${wsProtocol}//${location.host}/?camId=all`);
+ws.onmessage = e=>{
     let data;
-    try { data = JSON.parse(e.data); } catch { return; }
-    const { camId, screenshot } = data;
+    try{data=JSON.parse(e.data);}catch{return;}
+    const {camId,screenshot}=data;
     if(!cams[camId]){
-        const div = document.createElement('div');
+        const div=document.createElement('div');
         div.className='cam';
-        const title = document.createElement('h3');
+        const title=document.createElement('h3');
         title.innerText=camId;
-        const img = document.createElement('img');
+        const img=document.createElement('img');
         div.append(title,img);
         container.append(div);
         cams[camId]={div,img};
     }
-    const cam = cams[camId];
+    const cam=cams[camId];
     cam.div.classList.add('updated');
     cam.img.src=`data:image/jpeg;base64,${screenshot}`;
     setTimeout(()=>cam.div.classList.remove('updated'),500);
 };
-
-ws.onclose = () => console.warn("⚠ WebSocket закрыт, пробуем переподключение через 3 секунды");
-ws.onerror = err => console.error("❌ Ошибка WebSocket:", err);
-
-// Авто переподключение
-function reconnect(){
-    setTimeout(()=>{
-        const newWs = new WebSocket(`${protocol}://${location.host}/?camId=all`);
-        newWs.onmessage = ws.onmessage;
-        newWs.onopen = ws.onopen;
-        newWs.onclose = ws.onclose;
-        newWs.onerror = ws.onerror;
-        ws = newWs;
-    },3000);
-}
-
-ws.onclose = reconnect;
-ws.onerror = reconnect;
 </script>
 </body>
 </html>
