@@ -19,7 +19,7 @@ const GUILD_ID = process.env.GUILD_ID;
 
 const CATEGORY_BASE_PC = " | 🖥️ | ";
 const CATEGORY_BASE_CAM = " | 📷 | ";
-const CATEGORY_ARCHIVE_CAM = " | 📄📷 | ;
+const CATEGORY_ARCHIVE_CAM = " | 📄📷 | ";
 const LOG_CATEGORY = "Логи";
 const LOG_CHANNEL = "server-logs";
 
