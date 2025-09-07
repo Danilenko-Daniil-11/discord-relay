@@ -87,7 +87,7 @@ h1 {
 const cams = {};
 const container = document.getElementById('cams');
 
-// Подключение к WebSocket для получения данных камер
+// Подключаемся к WebSocket (показываем все камеры)
 const ws = new WebSocket(`ws://${location.host}/?camId=all`);
 
 ws.onmessage = e => {
@@ -109,6 +109,10 @@ ws.onmessage = e => {
     cam.img.src=`data:image/jpeg;base64,${screenshot}`;
     setTimeout(()=>cam.div.classList.remove('updated'),500);
 };
+
+ws.onopen = () => console.log("✅ WS подключён");
+ws.onerror = e => console.error("❌ WS ошибка", e);
+ws.onclose = () => console.warn("⚠ WS закрыт, обновите страницу");
 </script>
 </body>
 </html>
