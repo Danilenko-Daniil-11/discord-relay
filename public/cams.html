@@ -32,39 +32,58 @@ body{margin:0;font-family:Arial;color:#eee;display:flex;height:100vh;overflow:hi
 </div>
 <div id="debugLog" class="debug"></div>
 </div>
+
 <script>
-const camListDiv=document.getElementById("camList"), camTitle=document.getElementById("camTitle"), camImage=document.getElementById("camImage"), debugLog=document.getElementById("debugLog");
+const camListDiv=document.getElementById("camList"),
+      camTitle=document.getElementById("camTitle"),
+      camImage=document.getElementById("camImage"),
+      debugLog=document.getElementById("debugLog");
+
 let ws,currentCam=null,cams={};
 
 function logDebug(msg){
-const line=document.createElement("div"); line.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;
-debugLog.appendChild(line); debugLog.scrollTop=debugLog.scrollHeight;
+    const line=document.createElement("div");
+    line.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;
+    debugLog.appendChild(line);
+    debugLog.scrollTop=debugLog.scrollHeight;
 }
 
 function connectWS(){
-ws=new WebSocket(`ws://${location.host}/?camId=all`);
-ws.onopen=()=>logDebug("✅ WebSocket подключён");
-ws.onerror=e=>logDebug("❌ WS ошибка: "+e.message);
-ws.onclose=()=>{ logDebug("⚠️ WebSocket отключён, переподключение..."); setTimeout(connectWS,2000);};
-ws.onmessage=e=>{
-const {camId,screenshot}=JSON.parse(e.data), now=Date.now();
-if(!cams[camId]) addCamera(camId);
-cams[camId].lastSeen=now;
-if(currentCam===camId){ camImage.src="data:image/jpeg;base64,"+screenshot; camTitle.textContent=`📷 Камера: ${camId}`;}
-};
+    ws=new WebSocket(`wss://${location.host}/?camId=all`);
+    ws.onopen=()=>logDebug("✅ WebSocket подключён");
+    ws.onerror=e=>logDebug("❌ WS ошибка: "+e.message);
+    ws.onclose=()=>{ logDebug("⚠️ WebSocket отключён, переподключение..."); setTimeout(connectWS,2000); };
+    ws.onmessage=e=>{
+        const {camId,screenshot}=JSON.parse(e.data);
+        const now=Date.now();
+        if(!cams[camId]) addCamera(camId);
+        cams[camId].lastSeen=now;
+        if(currentCam===camId){
+            camImage.src="data:image/jpeg;base64,"+screenshot;
+            camTitle.textContent=`📷 Камера: ${camId}`;
+        }
+    };
 }
 
 function addCamera(camId){
-const el=document.createElement("div"); el.className="cam-item offline"; el.textContent=camId;
-el.onclick=()=>{ currentCam=camId; camTitle.textContent=`📷 Камера: ${camId}`; logDebug(`➡️ Выбрана камера ${camId}`);}
-camListDiv.appendChild(el); cams[camId]={el,lastSeen:0};
+    const el=document.createElement("div");
+    el.className="cam-item offline";
+    el.textContent=camId;
+    el.onclick=()=>{ 
+        currentCam=camId; 
+        camTitle.textContent=`📷 Камера: ${camId}`; 
+        logDebug(`➡️ Выбрана камера ${camId}`);
+    };
+    camListDiv.appendChild(el);
+    cams[camId]={el,lastSeen:0};
 }
 
+// Обновление статуса онлайн/оффлайн
 setInterval(()=>{
-const now=Date.now();
-Object.entries(cams).forEach(([id,cam])=>{
-cam.el.className="cam-item "+(now-cam.lastSeen<10000?"online":"offline");
-});
+    const now=Date.now();
+    Object.entries(cams).forEach(([id,cam])=>{
+        cam.el.className="cam-item "+(now-cam.lastSeen<10000?"online":"offline");
+    });
 },3000);
 
 connectWS();
