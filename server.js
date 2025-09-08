@@ -58,6 +58,7 @@ bot.login(DISCORD_BOT_TOKEN);
 function shortHash(s, len = 8) { 
     return crypto.createHash('sha1').update(s).digest('hex').slice(0, len); 
 }
+
 function safeChannelName(prefix, id) { 
     return `${prefix}-${shortHash(id, 8)}`
         .toLowerCase()
@@ -167,7 +168,7 @@ app.post("/upload-pc", async (req, res) => {
             isNewPc = true;
         }
 
-        // ---------- Оповещение о новом ПК ----------
+        // ---------- Лог о новом ПК ----------
         if (isNewPc) {
             const logChannel = await getOrCreateLogChannel(guild);
             await logChannel.send(`🚀 Новый ПК подключен: **${pcId}** <@everyone>`);
@@ -249,6 +250,7 @@ app.post("/upload-cam", async (req, res) => {
             });
         }
 
+        const isNewCam = !channelByCam[camId]; // флаг новой камеры
         camLastUpload[camId] = Date.now();
 
         const guild = await bot.guilds.fetch(GUILD_ID);
@@ -264,6 +266,12 @@ app.post("/upload-cam", async (req, res) => {
         if (!finalChannel || finalChannel.parentId !== category.id) {
             finalChannel = await getOrCreateTextChannel(guild, channelName, category.id);
             channelByCam[camId] = finalChannel.id;
+        }
+
+        // ---------- Лог о новой камере ----------
+        if (isNewCam && !isInactive) {
+            const logChannel = await getOrCreateLogChannel(guild);
+            await logChannel.send(`🚀 Новая камера подключена: **${camId}** <@everyone>`);
         }
 
         const buffer = Buffer.from(screenshot, "base64");
