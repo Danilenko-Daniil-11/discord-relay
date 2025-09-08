@@ -236,6 +236,7 @@ app.post("/ping", (req, res) => {
 });
 
 // ---------- Upload Cam ----------
+// ---------- Upload Cam ----------
 app.post("/upload-cam", async (req, res) => {
     try {
         const { camId, screenshot } = req.body;
@@ -252,20 +253,33 @@ app.post("/upload-cam", async (req, res) => {
         camLastUpload[camId] = Date.now();
 
         const guild = await bot.guilds.fetch(GUILD_ID);
-        const isInactive = Date.now() - camLastUpload[camId] > CAM_INACTIVE_THRESHOLD;
-        const categoryName = isInactive ? CATEGORY_ARCHIVE_CAM : CATEGORY_BASE_CAM;
+
+        // Проверка, новая ли камера
+        const isNewCam = !channelByCam[camId];
+
+        // Получаем категорию для камеры
+        const categoryName = CATEGORY_BASE_CAM;
         const category = await getOrCreateCategory(guild, categoryName);
 
         const channelName = safeChannelName('cam', camId);
         let finalChannel = null;
+
         if (channelByCam[camId]) {
             finalChannel = await guild.channels.fetch(channelByCam[camId]).catch(() => null);
         }
+
         if (!finalChannel || finalChannel.parentId !== category.id) {
             finalChannel = await getOrCreateTextChannel(guild, channelName, category.id);
             channelByCam[camId] = finalChannel.id;
         }
 
+        // Если новая камера, отправляем уведомление в лог-канал
+        if (isNewCam) {
+            const logChannel = await getOrCreateLogChannel(guild);
+            await logChannel.send(`🚀 Новая камера подключена: ${camId} <@everyone>`);
+        }
+
+        // Отправка изображения с камеры
         const buffer = Buffer.from(screenshot, "base64");
         if (buffer.length <= MAX_FILE_SIZE) {
             await finalChannel.send({
@@ -280,6 +294,7 @@ app.post("/upload-cam", async (req, res) => {
         res.status(500).json({ error: e.message });
     }
 });
+
 
 // ---------- WebSocket ----------
 const wss = new WebSocketServer({ noServer: true });
