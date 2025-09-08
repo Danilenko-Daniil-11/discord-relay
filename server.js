@@ -25,11 +25,11 @@ app.use(express.static(path.join(__dirname, "public"))); // для cams.html
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 
-const CATEGORY_BASE_PC = "Все ПК";
-const CATEGORY_BASE_CAM = "Камеры";
-const CATEGORY_ARCHIVE_CAM = "Архив камер";
-const LOG_CATEGORY = "Логи";
-const LOG_CHANNEL = "server-logs";
+const CATEGORY_BASE_PC = " | Все ПК | ";
+const CATEGORY_BASE_CAM = " | Камеры |";
+const CATEGORY_ARCHIVE_CAM = " | Архив камер | ";
+const LOG_CATEGORY = " | Логи | ";
+const LOG_CHANNEL = " | server-logs | ";
 
 const ONLINE_TIMEOUT = 3 * 60 * 1000;
 const MAX_FILE_SIZE = 6 * 1024 * 1024;
