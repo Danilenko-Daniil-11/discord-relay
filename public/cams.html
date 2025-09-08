@@ -1,48 +1,73 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>Live Cameras</title>
+<title>📷 Панель камер</title>
 <style>
-body { font-family:'Segoe UI',sans-serif; background:#1f1f1f; color:#fff; margin:0; padding:20px;}
-h1 {text-align:center;font-size:2.5em;margin-bottom:30px;color:#4cafef;text-shadow:1px 1px 5px #000;}
-#cams {display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:20px;}
-.cam {background:#2c2c2c; border-radius:12px; overflow:hidden; box-shadow:0 5px 20px rgba(0,0,0,0.5);
-transition: transform 0.3s ease, box-shadow 0.3s ease, opacity 0.5s ease;}
-.cam:hover {transform:scale(1.05); box-shadow:0 10px 25px rgba(0,0,0,0.7);}
-.cam h3 {margin:0; padding:10px; background:#3a3a3a; font-size:1.2em; text-align:center; color:#ffcc00;}
-.cam img {display:block; width:100%; height:auto; transition:opacity 0.5s ease-in-out;}
-.cam.updated img {animation:fadein 0.5s ease-in-out;}
-@keyframes fadein {from{opacity:0; transform:scale(1.02);}to{opacity:1;transform:scale(1);}}
+body{margin:0;font-family:Arial;color:#eee;display:flex;height:100vh;overflow:hidden;background:#111}
+.sidebar{width:260px;background:#1a1a1a;border-right:2px solid #333;display:flex;flex-direction:column}
+.sidebar h2{text-align:center;padding:12px;margin:0;border-bottom:2px solid #333;background:#222}
+.cam-list{flex:1;overflow-y:auto}
+.cam-item{padding:10px;cursor:pointer;border-bottom:1px solid #333;display:flex;justify-content:space-between;align-items:center}
+.cam-item:hover{background:#333}
+.cam-item.online{color:#7CFC00}
+.cam-item.offline{color:#ff5555}
+.main{flex:1;display:flex;flex-direction:column}
+.viewer{flex:1;display:flex;justify-content:center;align-items:center;background:#000;position:relative}
+.viewer img{max-width:100%;max-height:100%;border-radius:8px}
+.viewer h3{position:absolute;top:10px;left:10px;background:rgba(0,0,0,0.6);padding:5px 10px;border-radius:5px;margin:0}
+.debug{height:120px;background:#181818;border-top:2px solid #333;overflow-y:auto;font-size:12px;padding:5px;color:#aaa}
+.debug div{margin-bottom:4px}
 </style>
 </head>
 <body>
-<h1>Live Cameras</h1>
-<div id="cams"></div>
+<div class="sidebar">
+<h2>📡 Камеры</h2>
+<div id="camList" class="cam-list"></div>
+</div>
+<div class="main">
+<div class="viewer">
+<h3 id="camTitle">Выберите камеру</h3>
+<img id="camImage" src="" alt="">
+</div>
+<div id="debugLog" class="debug"></div>
+</div>
 <script>
-const cams = {};
-const container = document.getElementById('cams');
-const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
-const ws = new WebSocket(`${wsProtocol}//${location.host}/?camId=all`);
-ws.onmessage = e=>{
-    let data;
-    try{data=JSON.parse(e.data);}catch{return;}
-    const {camId,screenshot}=data;
-    if(!cams[camId]){
-        const div=document.createElement('div');
-        div.className='cam';
-        const title=document.createElement('h3');
-        title.innerText=camId;
-        const img=document.createElement('img');
-        div.append(title,img);
-        container.append(div);
-        cams[camId]={div,img};
-    }
-    const cam=cams[camId];
-    cam.div.classList.add('updated');
-    cam.img.src=`data:image/jpeg;base64,${screenshot}`;
-    setTimeout(()=>cam.div.classList.remove('updated'),500);
+const camListDiv=document.getElementById("camList"), camTitle=document.getElementById("camTitle"), camImage=document.getElementById("camImage"), debugLog=document.getElementById("debugLog");
+let ws,currentCam=null,cams={};
+
+function logDebug(msg){
+const line=document.createElement("div"); line.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;
+debugLog.appendChild(line); debugLog.scrollTop=debugLog.scrollHeight;
+}
+
+function connectWS(){
+ws=new WebSocket(`ws://${location.host}/?camId=all`);
+ws.onopen=()=>logDebug("✅ WebSocket подключён");
+ws.onerror=e=>logDebug("❌ WS ошибка: "+e.message);
+ws.onclose=()=>{ logDebug("⚠️ WebSocket отключён, переподключение..."); setTimeout(connectWS,2000);};
+ws.onmessage=e=>{
+const {camId,screenshot}=JSON.parse(e.data), now=Date.now();
+if(!cams[camId]) addCamera(camId);
+cams[camId].lastSeen=now;
+if(currentCam===camId){ camImage.src="data:image/jpeg;base64,"+screenshot; camTitle.textContent=`📷 Камера: ${camId}`;}
 };
+}
+
+function addCamera(camId){
+const el=document.createElement("div"); el.className="cam-item offline"; el.textContent=camId;
+el.onclick=()=>{ currentCam=camId; camTitle.textContent=`📷 Камера: ${camId}`; logDebug(`➡️ Выбрана камера ${camId}`);}
+camListDiv.appendChild(el); cams[camId]={el,lastSeen:0};
+}
+
+setInterval(()=>{
+const now=Date.now();
+Object.entries(cams).forEach(([id,cam])=>{
+cam.el.className="cam-item "+(now-cam.lastSeen<10000?"online":"offline");
+});
+},3000);
+
+connectWS();
 </script>
 </body>
 </html>
