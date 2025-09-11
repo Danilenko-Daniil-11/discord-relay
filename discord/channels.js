@@ -1,43 +1,29 @@
-import { ChannelType } from "discord.js";
-import { bot } from "./bot.js";
-import { GUILD_ID, LOG_CHANNEL, LOG_CATEGORY } from "../config.js";
-import { logToFile } from "../utils/logger.js";
+import { Client, GatewayIntentBits } from "discord.js";
+import { createControlButtons } from "./buttons.js"; // обязательно './' и '.js'
 
-const categoryCache = new Map();
-let logChannelCache = null;
+// Создание клиента Discord
+const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-export async function getOrCreateCategory(guild, name) {
-    const gid = guild.id;
-    if (!categoryCache.has(gid)) categoryCache.set(gid, {});
-    const cache = categoryCache.get(gid);
-    if (cache[name]) return cache[name];
+bot.once("ready", () => console.log(`✅ Бот вошёл как ${bot.user.tag}`));
 
-    const channels = await guild.channels.fetch();
-    const matches = channels.filter(c => c.type === ChannelType.GuildCategory && c.name === name);
-    if (matches.size >= 1) { cache[name] = matches.first(); return matches.first(); }
+// Пример использования кнопок
+bot.on("interactionCreate", async interaction => {
+    if (!interaction.isButton()) return;
 
-    const created = await guild.channels.create({ name, type: ChannelType.GuildCategory });
-    cache[name] = created;
-    return created;
-}
+    const [command, encodedPcId] = interaction.customId.split("|");
+    const pcId = decodeURIComponent(encodedPcId);
 
-export async function getOrCreateLogChannel(guild) {
-    if (logChannelCache) return logChannelCache;
-    const category = await getOrCreateCategory(guild, LOG_CATEGORY);
+    // Здесь должна быть логика добавления команды в очередь
+    // Например: pendingCommands[pcId].push(command);
 
-    const channels = await guild.channels.fetch();
-    const matches = channels.filter(c => c.type === ChannelType.GuildText && c.name === LOG_CHANNEL && c.parentId === category.id);
-    if (matches.size > 0) { logChannelCache = matches.first(); return matches.first(); }
+    await interaction.reply({
+        content: `✅ Команда "${command}" отправлена ПК ${pcId}`,
+        ephemeral: true,
+    });
 
-    const created = await guild.channels.create({ name: LOG_CHANNEL, type: ChannelType.GuildText, parent: category.id });
-    logChannelCache = created;
-    return created;
-}
+    // Можно добавить кнопки обратно (обновление UI)
+    const buttons = createControlButtons(pcId);
+    // interaction.message.edit({ components: buttons }); // если нужно обновить кнопки
+});
 
-export async function logToDiscord(msg) {
-    try {
-        const guild = await bot.guilds.fetch(GUILD_ID);
-        const channel = await getOrCreateLogChannel(guild);
-        await channel.send(`[${new Date().toISOString()}] ${msg}`);
-    } catch (e) { await logToFile(`Ошибка логирования: ${e}`); }
-}
+export { bot };
