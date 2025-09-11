@@ -1,62 +1,144 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
-<meta charset="UTF-8">
-<title>Камеры</title>
-<style>
-body { font-family: sans-serif; background:#121212; color:#eee; }
-h1 { text-align:center; }
-#cams { display:flex; flex-wrap:wrap; gap:10px; justify-content:center; }
-.cam-container { border:1px solid #444; padding:5px; text-align:center; }
-.cam-container img { max-width:320px; border-radius:4px; }
-#debug { position:fixed; bottom:0; left:0; right:0; background:#222; color:#0f0; font-size:12px; padding:4px; max-height:150px; overflow:auto; }
-select { margin:10px; padding:5px; background:#222; color:#eee; border:1px solid #555; }
-</style>
+    <meta charset="UTF-8">
+    <title>Камеры в реальном времени</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f0f0f0;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        #status {
+            text-align: center;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+        .camera-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+        }
+        .camera {
+            border: 1px solid #ccc;
+            background: #fff;
+            padding: 10px;
+            border-radius: 6px;
+            width: 320px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .camera img {
+            width: 100%;
+            height: auto;
+            border-radius: 4px;
+            display: block;
+            background: #000;
+        }
+        .camera-id {
+            margin-top: 5px;
+            font-weight: bold;
+            text-align: center;
+            word-break: break-word;
+        }
+        .log {
+            max-height: 150px;
+            overflow-y: auto;
+            background: #222;
+            color: #0f0;
+            padding: 10px;
+            margin-top: 20px;
+            font-family: monospace;
+            border-radius: 6px;
+        }
+    </style>
 </head>
 <body>
-<h1>Камеры</h1>
-<select id="camSelect"></select>
-<div id="cams"></div>
-<div id="debug"></div>
+    <h1>Камеры в реальном времени</h1>
+    <div id="status">Подключение к серверу...</div>
+    <div class="camera-container" id="cameraContainer"></div>
+    <div class="log" id="logContainer"></div>
 
-<script>
-const camsDiv = document.getElementById('cams');
-const debugDiv = document.getElementById('debug');
-const camSelect = document.getElementById('camSelect');
+    <script>
+        const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}?camId=all`;
+        const ws = new WebSocket(wsUrl);
 
-let cams = {}; // camId -> img элемент
+        const cameras = {}; // cameraId -> img элемент
+        const container = document.getElementById('cameraContainer');
+        const logContainer = document.getElementById('logContainer');
+        const statusEl = document.getElementById('status');
 
-function log(msg){ debugDiv.innerText += msg+"\n"; debugDiv.scrollTop=debugDiv.scrollHeight; }
+        function log(message) {
+            const ts = new Date().toLocaleTimeString();
+            const line = `[${ts}] ${message}`;
+            console.log(line);
+            const div = document.createElement('div');
+            div.textContent = line;
+            logContainer.appendChild(div);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
 
-// Функция добавления камеры
-function addCam(camId){
-    if(cams[camId]) return;
-    const div=document.createElement('div');
-    div.className='cam-container';
-    const label=document.createElement('div'); label.innerText=camId;
-    const img=document.createElement('img'); img.id=camId;
-    div.appendChild(label); div.appendChild(img); camsDiv.appendChild(div);
-    cams[camId]=img;
+        ws.onopen = () => {
+            statusEl.textContent = "✅ WebSocket подключен";
+            log("WebSocket соединение открыто");
+        };
 
-    const option=document.createElement('option'); option.value=camId; option.innerText=camId;
-    camSelect.appendChild(option);
-}
+        ws.onclose = () => {
+            statusEl.textContent = "❌ WebSocket закрыт";
+            log("WebSocket соединение закрыто");
+        };
 
-// WebSocket
-function connectWS(camId){
-    const ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}?camId=${camId}`);
-    ws.onopen=()=>log(`WS подключен: ${camId}`);
-    ws.onmessage=(event)=>{
-        const data=JSON.parse(event.data);
-        addCam(data.camId);
-        cams[data.camId].src="data:image/jpeg;base64,"+data.screenshot;
-    }
-    ws.onclose=()=>{ log(`WS закрыт: ${camId}`); setTimeout(()=>connectWS(camId),2000); }
-}
+        ws.onerror = err => {
+            statusEl.textContent = "❌ Ошибка WebSocket";
+            log("WebSocket ошибка: " + err.message);
+        };
 
-connectWS("all");
+        ws.onmessage = event => {
+            try {
+                const data = JSON.parse(event.data);
+                const { camId, screenshot } = data;
+                if (!camId || !screenshot) return;
 
-camSelect.addEventListener("change", ()=>{ const camId=camSelect.value; camsDiv.querySelectorAll(".cam-container").forEach(c=>c.style.display="none"); if(cams[camId]) cams[camId].parentElement.style.display="block"; });
-</script>
+                // Создаем блок камеры, если ещё нет
+                if (!cameras[camId]) {
+                    const div = document.createElement('div');
+                    div.className = 'camera';
+
+                    const img = document.createElement('img');
+                    img.src = ''; // пока пусто
+
+                    const label = document.createElement('div');
+                    label.className = 'camera-id';
+                    label.textContent = camId;
+
+                    div.appendChild(img);
+                    div.appendChild(label);
+                    container.appendChild(div);
+
+                    cameras[camId] = img;
+                    log(`Добавлена новая камера: ${camId}`);
+                }
+
+                // Обновляем скриншот
+                cameras[camId].src = `data:image/jpeg;base64,${screenshot}?t=${Date.now()}`;
+            } catch (e) {
+                log("Ошибка при обработке сообщения WS: " + e.message);
+            }
+        };
+
+        // Попытка переподключения каждые 5 секунд, если закрыт
+        const reconnectInterval = setInterval(() => {
+            if (ws.readyState === WebSocket.CLOSED) {
+                log("Попытка переподключения...");
+                statusEl.textContent = "🔄 Попытка переподключения...";
+                location.reload(); // простой способ переподключения
+            }
+        }, 5000);
+    </script>
 </body>
 </html>
