@@ -1,7 +1,8 @@
 import { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
 import { DISCORD_BOT_TOKEN, GUILD_ID } from "../config.js";
 import { createControlButtons } from "./buttons.js";
-import { logToDiscord } from "./channels.js";
+import { logToDiscord } from "./channels.js"; // обязательно './' и '.js'
+
 
 export const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
 
