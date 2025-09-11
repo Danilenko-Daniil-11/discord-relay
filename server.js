@@ -21,8 +21,6 @@ const app = express();
 app.use(express.json({ limit: "100mb" }));
 app.use(express.static(path.join(__dirname, "public"))); // для cams.html
 
-
-
 // ---------- Конфигурация ----------
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
@@ -36,8 +34,6 @@ const LOG_CHANNEL = "server-logs";
 const ONLINE_TIMEOUT = 3 * 60 * 1000;
 const MAX_FILE_SIZE = 6 * 1024 * 1024;
 const CAM_INACTIVE_THRESHOLD = 2 * 60 * 1000; // 2 минуты
-
-
 
 // ---------- Состояние ----------
 const onlinePCs = {};
@@ -71,6 +67,7 @@ async function logToDiscord(msg) {
         const guild = await bot.guilds.fetch(GUILD_ID);
         const channel = await getOrCreateLogChannel(guild);
         await channel.send(`[${new Date().toISOString()}] ${msg}`);
+        console.log(`[LOG] ${msg}`);
     } catch (e) { console.error("Ошибка логирования:", e); }
 }
 
